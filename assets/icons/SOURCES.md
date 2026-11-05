@@ -1,5 +1,11 @@
 # PixelLab icon sources
 
+Runtime cleanup (2026-11-05): the IDs and preparation notes below record
+provenance. Unused original crop inputs were removed; prepared `ui/` icons
+remain. The native board bomb is now `board/bomb-unlit.png`, and its ignition
+animation is `../effects/bomb-ignite/`. Reimport the original PixelLab objects
+when rebuilding a prepared icon. Mshield uses its separate purple icon/clip.
+
 32×32 source objects, downloaded unchanged on 2026-10-20:
 
 - Red heart: c2945308-1349-4e8e-99a9-4e4f0d2ff7f7

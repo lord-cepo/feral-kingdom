@@ -19,7 +19,7 @@ func setup(owner_board: GuerraBoard, saved: Dictionary) -> void:
 	record = saved
 	add_child(actor)
 	trail = {"actor": actor}
-	highlight.texture = preload("res://assets/grey-hex.png")
+	highlight.texture = preload("res://assets/board/hexes/grey-hex.png")
 	highlight.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	highlight.modulate = Color(1.0, 0.76, 0.22, 1.0)
 	highlight.z_index = 4

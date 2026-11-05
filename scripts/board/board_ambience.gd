@@ -2,9 +2,9 @@
 class_name BoardAmbience
 extends Node2D
 
-const GRASS_TALL := "res://assets/environment/grass-tall/animations/The_blades_of_grass_sway_rhythmically_bending_in/unknown/"
-const GRASS_BUSH := "res://assets/environment/grass-bush/animations/The_dense_foliage_sways_rhythmically_leaning_heav/unknown/"
-const TORNADO := "res://assets/environment/tornado/animations/The_wispy_form_begins_to_tighten_its_nebulous_edg/unknown/"
+const GRASS_TALL := "res://assets/environment/grass-tall/"
+const GRASS_BUSH := "res://assets/environment/grass-bush/"
+const TORNADO := "res://assets/environment/tornado/"
 const WIND := "res://assets/environment/wind/"
 ## Off by default while screen-wide weather presentation is being considered; enable before setup to restore local one-shots.
 @export var weather_enabled := false

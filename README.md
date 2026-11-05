@@ -28,6 +28,8 @@ Character animations use the optimized sprite sheets in
 from this repository; they are needed only for artwork editing and rebuilding
 the sheets. Other individual images, including interface, terrain and effects,
 remain included because the game uses them.
+See [the asset folder guide](assets/README.md) for the runtime layout and audit
+command. Unused legacy illustrations and their import files have been removed.
 
 ## Play with another person
 
@@ -79,5 +81,6 @@ Generated caches, local tools, exported bundles and credentials are excluded fro
 Git. Tests are opt-in under this project's `AGENTS.md` instructions.
 
 The character import/alignment/sheet-building tools require the original source
-frames in addition to Python/Pillow. Those source frames are kept separately
-from the playable client.
+frames in addition to Python/Pillow. Reimport those from PixelLab or recover
+them from repository history when editing character animations. Editable PXO
+projects are preserved locally in the ignored `art-source/` folder.

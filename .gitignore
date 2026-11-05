@@ -9,6 +9,7 @@
 /exports/
 /.tmp/
 /godot.exe
+/art-source/
 
 # Editable character frames stay local; the game uses the generated sheets.
 /assets/characters/*

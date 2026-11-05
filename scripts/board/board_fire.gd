@@ -8,8 +8,6 @@ const FIRE_ART_OFFSET := Vector2(0, -13)
 const TARGET_OFFSETS := {&"fire": TARGET_OFFSET, &"bow": Vector2(-84, -68), &"cannon": Vector2(-84, 36), &"bomb_throw": Vector2(84, -16), &"stun": Vector2(0, -110)}
 const TRAVEL_SECONDS := 0.65
 const FLAME_OPACITY := 0.8
-## Toggle for the current visual comparison; false restores the single travelling arrow artwork.
-const USE_PIXELLAB_BOW := true
 var board: GuerraBoard
 var origin_hex: int
 var target_hex: int
@@ -27,7 +25,7 @@ var flame := AnimatedSprite2D.new()
 ## Frame loading also supports newly downloaded PNGs before the editor's import scan has run.
 ## No board number is created; piercing details remain in hover counters.
 ## Bow reuses travel timing with PixelLab's seven-frame bow loop, rotated toward its captured target.
-## USE_PIXELLAB_BOW retains the earlier single-arrow presentation as a comparison option.
+## Bow always uses the PixelLab animation; no legacy single-arrow comparison asset is loaded.
 ## Fire and Bow loops play at 5.5fps (half speed); travel retains its timing.
 ## Target placement and Fire body alignment are shared with action_replay.gd through TARGET_OFFSETS/FIRE_ART_OFFSET.
 ## Cannon uses its nine-frame clip and pending Cannon record, excluding Bomb explosions from Cannon markers.
@@ -52,19 +50,16 @@ func setup(presenter: GuerraBoard, origin: int, target: int, _amount: int, _owne
 	var frames := SpriteFrames.new()
 	frames.set_animation_loop(&"default", true)
 	frames.set_animation_speed(&"default", 5.5)
-	if bow_visual and not USE_PIXELLAB_BOW:
-		frames.add_frame(&"default", preload("res://assets/arrow.png"))
-	else:
-		var frame_count := 9 if action_kind == &"cannon" else (7 if bow_visual else 11)
-		for index in frame_count:
-			var texture := _load_frame(index)
-			if texture != null: frames.add_frame(&"default", texture)
+	var frame_count := 9 if action_kind == &"cannon" else (7 if bow_visual else 11)
+	for index in frame_count:
+		var texture := _load_frame(index)
+		if texture != null: frames.add_frame(&"default", texture)
 	flame.sprite_frames = frames
 	flame.scale = Vector2.ONE * 2.625
 	flame.position = FIRE_ART_OFFSET
 	if aims_at_bomb: flame.position = Vector2.ZERO
 	if bow_visual:
-		flame.scale = Vector2.ONE * (2.625 if USE_PIXELLAB_BOW else 84.0 / 256.0)
+		flame.scale = Vector2.ONE * 2.625
 		flame.position = Vector2.ZERO
 	elif action_kind == &"cannon": flame.position = Vector2.ZERO
 	add_child(flame)

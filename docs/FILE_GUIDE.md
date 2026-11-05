@@ -1,5 +1,13 @@
 # Project file guide
 
+Runtime asset cleanup (2026-11-05): [assets/README.md](../assets/README.md) is
+the current directory map and loader caller guide. Original character frames,
+legacy high-resolution card art and unused loose images/imports are no longer
+shipped or retained locally. Older source-directory descriptions below record
+import history; runtime characters use only `assets/characters/sheets/`.
+Editable PXO projects live locally outside resources in ignored `art-source/`.
+`tools/audit_runtime_assets.py` performs a read-only dependency/animation audit.
+
 `relay/` is the independently deployable Cloudflare lobby/message relay. It is
 excluded from Godot import with `.gdignore`. See `relay/README.md` and
 `relay/PROTOCOL.md` for setup, wire contracts, caller maps and limitations. It
@@ -520,8 +528,8 @@ Bow presentation caller map: `Match.action_event` (Bow `target`) →
 PixelLab draw/release loop in `assets/effects/bow/`, at 5.5fps and 2.625× scale,
 rotated toward its captured target. Object: `610190f3-c394-4ef0-8f20-1bf2919e71e3`;
 animation group: `d1bff251-b605-405c-aba8-80e7ba0062de`.
-Set `USE_PIXELLAB_BOW` to false in `board_fire.gd` to compare the previous
-single `assets/arrow.png` sprite at 84px long. Its left-side destination
+Bow always uses that PixelLab clip; the unused single-arrow comparison artwork
+and its toggle were removed during asset cleanup. Its left-side destination
 offset is `(-84, -68)` so simultaneous Fire and Bow markers occupy separate rows.
 Travel takes 0.65s, opacity reaches at most 80% outside the starting hex, and the marker carries no number/P overlay; those details remain in hover counters. Pending Bow retains
 the captured record until resolution/removal; instant Bow briefly holds and
@@ -629,7 +637,7 @@ Icon presentation sizes: GameIcons descriptions default to 32px; HexCell uses 48
 
 GameIcons loads tightly cropped, proportion-preserving icons with smaller hearts from `assets/icons/ui/`. Icon-bearing rich labels/buttons use nearest filtering; HexCell applies tighter line and paragraph separation to ordinary and Bash info.
 
-HexCell._fixed_info_rows() standardizes ordinary and Bash info line metrics with `assets/icons/info-row-spacer.png`, a transparent 1×60 layout strut, keeping spacing equal across units with different icon sizes.
+HexCell._fixed_info_rows() standardizes ordinary and Bash info line metrics with `assets/icons/ui/info-row-spacer.png`, a transparent 1×60 layout strut, keeping spacing equal across units with different icon sizes.
 
 `assets/characters/playground/manifest.json` records the six card-to-PixelLab appearance mappings, source state IDs and animation lengths; each card folder contains native idle/rotation/stand/walk/action PNGs. BoardCharacter resolves full card prefixes, preserving Pine Processionary's internal hyphen-p, and anchors expanded animation canvases against their own clip floor.
 

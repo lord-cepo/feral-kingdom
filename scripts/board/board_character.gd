@@ -2,7 +2,6 @@
 class_name BoardCharacter
 extends Sprite2D
 
-const PLAYGROUND_ROOT := "res://assets/characters/playground/"
 const SHEET_ROOT := "res://assets/characters/sheets/"
 const MAPPED_CARDS := ["squirrel-king", "pine-processionary", "thunder-toad", "walnut-crab", "reed-archer", "mole-artificer", "bramble-empress",
 	"rat-dark-mage", "wild-rat", "rat-musketeer", "rat-thief", "rat-warrior", "rat-pikeman", "rat-swordsman",

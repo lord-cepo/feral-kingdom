@@ -10,19 +10,19 @@ signal bash_unit_pressed(coordinate: Vector2i, unit_id: int)
 ## Side-by-side characters are the default; the optional scene setting enables the experimental half-clipped comparison.
 @export var bash_slider_enabled := false
 
-const FRAME_DBLUE := preload("res://assets/dark-blue-hex.png")
-const FRAME_DRED := preload("res://assets/dark-red-hex.png")
-const FRAME_LBLUE := preload("res://assets/light-blue-hex.png")
-const FRAME_LRED := preload("res://assets/light-red-hex.png")
-const FRAME_GREY := preload("res://assets/grey-hex.png")
+const FRAME_DBLUE := preload("res://assets/board/hexes/dark-blue-hex.png")
+const FRAME_DRED := preload("res://assets/board/hexes/dark-red-hex.png")
+const FRAME_LBLUE := preload("res://assets/board/hexes/light-blue-hex.png")
+const FRAME_LRED := preload("res://assets/board/hexes/light-red-hex.png")
+const FRAME_GREY := preload("res://assets/board/hexes/grey-hex.png")
 const INACTIVE_ART_SHADER := preload("res://assets/shaders/inactive_board_art.gdshader")
 const INFO_FONT := preload("res://assets/fonts/hex_info_font.tres")
 const BOMB_SCALE := 2.625
-const BOMB_ICON := "res://assets/icons/bomb-unlit.png"
+const BOMB_ICON := "res://assets/icons/board/bomb-unlit.png"
 ## Normal Bomb placement/travel and historical replays share the same target-relative endpoint.
 const BOMB_OFFSET: Vector2 = preload("res://scripts/board/board_fire.gd").TARGET_OFFSETS[&"bomb_throw"]
 const INFO_FONT_SIZE := 31
-const INFO_ROW_SPACER := "[img=1x60]res://assets/icons/info-row-spacer.png[/img]"
+const INFO_ROW_SPACER := "[img=1x60]res://assets/icons/ui/info-row-spacer.png[/img]"
 @onready var frame := $HexFrame
 @onready var unit_figures: Node2D = $UnitFigures
 var hex_info: HexInfo
@@ -116,7 +116,7 @@ func _setup_bomb_sprite() -> void:
 	frames.set_animation_loop(&"ignite", true)
 	frames.set_animation_speed(&"ignite", 9.0)
 	for index in 9:
-		frames.add_frame(&"ignite", load("res://assets/icons/bomb-ignite/frame_%d.png" % index))
+		frames.add_frame(&"ignite", load("res://assets/effects/bomb-ignite/frame_%d.png" % index))
 	bomb_sprite.sprite_frames = frames
 	var body := Sprite2D.new()
 	body.name = "PersistentBombBody"

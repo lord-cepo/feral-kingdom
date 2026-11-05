@@ -174,7 +174,7 @@ func _build_hud() -> void:
 	background_layer.layer = -1
 	get_parent().add_child(background_layer)
 	var parchment := TextureRect.new()
-	parchment.texture = load("res://assets/background.png")
+	parchment.texture = load("res://assets/ui/background.png")
 	parchment.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	parchment.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	parchment.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -1,7 +1,7 @@
 ## Screen-space leaf ambience above the board and below Interface; owns no input or Match state.
 extends CanvasLayer
 
-const LEAF_ROOT := "res://assets/environment/windy-leaves/ELR-WindyLeafs/"
+const LEAF_ROOT := "res://assets/environment/windy-leaves/"
 const SHEETS := ["ELR_SpringlLeaf.png", "ELR_FallLeaf.png", "ELR_WinterlLeaf.png"]
 @export_range(0, 40) var leaf_count := 12
 var leaves: Array[Dictionary] = []
