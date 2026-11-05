@@ -1,0 +1,8 @@
+{
+  "character_id": "4a2d6fe1-3578-4177-8c4e-33b771001ec6",
+  "animation_id": "245328ef-801e-4286-a385-79e638a8caef",
+  "direction": "south",
+  "frame_count": 9,
+  "fps": 10,
+  "grounding": "Per-frame render offset from opaque foot edge to idle baseline; original PNGs unchanged"
+}

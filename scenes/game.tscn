@@ -1,0 +1,15 @@
+[gd_scene format=3 uid="uid://b244p4wmec8qj"]
+
+[ext_resource type="Script" uid="uid://cbuqsm4cp6t1x" path="res://scripts/ui/game.gd" id="1_game"]
+[ext_resource type="PackedScene" uid="uid://c3vfmwefr3ssy" path="res://scenes/board/board.tscn" id="2_board"]
+[ext_resource type="Script" path="res://scripts/ui/local_match_controller.gd" id="3_local_match"]
+
+[node name="Game" type="Node" unique_id=700000001]
+script = ExtResource("1_game")
+
+[node name="MatchSession" type="Node" parent="." unique_id=700000002]
+script = ExtResource("3_local_match")
+
+[node name="Board" parent="." unique_id=700000004 instance=ExtResource("2_board")]
+
+[node name="UI" type="CanvasLayer" parent="." unique_id=700000009]

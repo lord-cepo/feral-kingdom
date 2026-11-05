@@ -1,0 +1,159 @@
+{
+  "group_id": "bf4dccdf-22cd-4202-843b-0bafa2c9c919",
+  "states": [
+    {
+      "character": {
+        "id": "ab782c1e-fc5a-4a4e-8f4b-5fd3707724a2",
+        "name": "stand",
+        "prompt": "mouse engineer with glasses. blueprints in right hand, a pencil in the left hand. low top down view, body and head facing camera",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-20T10:42:35.186946+00:00"
+      },
+      "folder": "stand",
+      "frames": {
+        "rotations": {
+          "south": "stand/rotations/south.png",
+          "south-east": "stand/rotations/south-east.png",
+          "east": "stand/rotations/east.png",
+          "north-east": "stand/rotations/north-east.png",
+          "north": "stand/rotations/north.png",
+          "north-west": "stand/rotations/north-west.png",
+          "west": "stand/rotations/west.png",
+          "south-west": "stand/rotations/south-west.png"
+        },
+        "animations": {
+          "The_character_holds_a_blueprint_with_both_hands_un": {
+            "south": [
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_000.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_001.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_002.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_003.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_004.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_005.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_006.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_007.png",
+              "stand/animations/The_character_holds_a_blueprint_with_both_hands_un/south/frame_008.png"
+            ]
+          },
+          "Walking": {
+            "south-east": [
+              "stand/animations/Walking/south-east/frame_000.png",
+              "stand/animations/Walking/south-east/frame_001.png",
+              "stand/animations/Walking/south-east/frame_002.png",
+              "stand/animations/Walking/south-east/frame_003.png",
+              "stand/animations/Walking/south-east/frame_004.png",
+              "stand/animations/Walking/south-east/frame_005.png"
+            ],
+            "south-west": [
+              "stand/animations/Walking/south-west/frame_000.png",
+              "stand/animations/Walking/south-west/frame_001.png",
+              "stand/animations/Walking/south-west/frame_002.png",
+              "stand/animations/Walking/south-west/frame_003.png",
+              "stand/animations/Walking/south-west/frame_004.png",
+              "stand/animations/Walking/south-west/frame_005.png"
+            ],
+            "north-east": [
+              "stand/animations/Walking/north-east/frame_000.png",
+              "stand/animations/Walking/north-east/frame_001.png",
+              "stand/animations/Walking/north-east/frame_002.png",
+              "stand/animations/Walking/north-east/frame_003.png",
+              "stand/animations/Walking/north-east/frame_004.png",
+              "stand/animations/Walking/north-east/frame_005.png"
+            ],
+            "west": [
+              "stand/animations/Walking/west/frame_000.png",
+              "stand/animations/Walking/west/frame_001.png",
+              "stand/animations/Walking/west/frame_002.png",
+              "stand/animations/Walking/west/frame_003.png",
+              "stand/animations/Walking/west/frame_004.png",
+              "stand/animations/Walking/west/frame_005.png"
+            ],
+            "east": [
+              "stand/animations/Walking/east/frame_000.png",
+              "stand/animations/Walking/east/frame_001.png",
+              "stand/animations/Walking/east/frame_002.png",
+              "stand/animations/Walking/east/frame_003.png",
+              "stand/animations/Walking/east/frame_004.png",
+              "stand/animations/Walking/east/frame_005.png"
+            ],
+            "north-west": [
+              "stand/animations/Walking/north-west/frame_000.png",
+              "stand/animations/Walking/north-west/frame_001.png",
+              "stand/animations/Walking/north-west/frame_002.png",
+              "stand/animations/Walking/north-west/frame_003.png",
+              "stand/animations/Walking/north-west/frame_004.png",
+              "stand/animations/Walking/north-west/frame_005.png"
+            ],
+            "north": [
+              "stand/animations/Walking/north/frame_000.png",
+              "stand/animations/Walking/north/frame_001.png",
+              "stand/animations/Walking/north/frame_002.png",
+              "stand/animations/Walking/north/frame_003.png",
+              "stand/animations/Walking/north/frame_004.png",
+              "stand/animations/Walking/north/frame_005.png"
+            ],
+            "south": [
+              "stand/animations/Walking/south/frame_000.png",
+              "stand/animations/Walking/south/frame_001.png",
+              "stand/animations/Walking/south/frame_002.png",
+              "stand/animations/Walking/south/frame_003.png",
+              "stand/animations/Walking/south/frame_004.png",
+              "stand/animations/Walking/south/frame_005.png"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "character": {
+        "id": "3a1f0708-c2ba-4039-a850-8065d32868bf",
+        "name": "sit",
+        "prompt": "mouse engineer with glasses. blueprints in right hand, a pencil in the left hand. low top down view, body and head facing camera",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-20T10:53:43.260505+00:00"
+      },
+      "folder": "sit",
+      "frames": {
+        "rotations": {
+          "south": "sit/rotations/south.png",
+          "south-east": "sit/rotations/south-east.png",
+          "east": "sit/rotations/east.png",
+          "north-east": "sit/rotations/north-east.png",
+          "north": "sit/rotations/north.png",
+          "north-west": "sit/rotations/north-west.png",
+          "west": "sit/rotations/west.png",
+          "south-west": "sit/rotations/south-west.png"
+        },
+        "animations": {
+          "The_character_shifts_weight_from_a_seated_position": {
+            "south": [
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_000.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_001.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_002.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_003.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_004.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_005.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_006.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_007.png",
+              "sit/animations/The_character_shifts_weight_from_a_seated_position/south/frame_008.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-10-21T10:26:39.519438"
+}

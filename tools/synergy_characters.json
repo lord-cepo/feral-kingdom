@@ -1,0 +1,142 @@
+[
+  {
+    "id": "6ce07f62-fdf0-4379-be38-b3b907642e18",
+    "name": "tamia blue mage",
+    "key": "tamia-blue-mage"
+  },
+  {
+    "id": "963b5306-ffce-4fc8-992b-485b16c362ff",
+    "name": "tamia red mage",
+    "key": "tamia-red-mage"
+  },
+  {
+    "id": "2a2e5264-11ca-475f-bde3-c0bb969ff234",
+    "name": "tamia crossbowman",
+    "key": "tamia-crossbowman"
+  },
+  {
+    "id": "7c7dca61-cc3a-4fe5-83c4-ebc9bb2ac0d3",
+    "name": "tamia archer",
+    "key": "tamia-archer"
+  },
+  {
+    "id": "53849361-0f51-4e5a-b837-82fe6ddaba0c",
+    "name": "tamia warrior",
+    "key": "tamia-warrior"
+  },
+  {
+    "id": "e5c5b751-d67c-4c7f-836b-332b71964a31",
+    "name": "tamia knight",
+    "key": "tamia-knight"
+  },
+  {
+    "id": "c7119792-70a5-41f7-a1c6-1843fefa7f8f",
+    "name": "chinchilla soldier",
+    "key": "chinchilla-soldier"
+  },
+  {
+    "id": "efdfa7b1-f747-4ff4-bd15-5a5632587677",
+    "name": "chinchilla sentinel",
+    "key": "chinchilla-sentinel"
+  },
+  {
+    "id": "a2d8db4b-e169-4d8f-aa46-db311be8c8a8",
+    "name": "marmot halberdier",
+    "key": "marmot-halberdier"
+  },
+  {
+    "id": "80240632-6990-48be-801d-08e2d9a66324",
+    "name": "marmot paladin",
+    "key": "marmot-paladin"
+  },
+  {
+    "id": "e1b8bff9-9a02-4ee0-86e4-2cf72c6626de",
+    "name": "jerboa banner bearer",
+    "key": "jerboa-banner-bearer"
+  },
+  {
+    "id": "ca20234f-b793-413e-8953-e9fa120efe01",
+    "name": "jerboa warrior",
+    "key": "jerboa-warrior"
+  },
+  {
+    "id": "826f888d-eb41-474b-9fb7-97c5b99fcde2",
+    "name": "jerboa cannoneer",
+    "key": "jerboa-cannoneer"
+  },
+  {
+    "id": "29ce87e4-8727-488d-b8b0-a266df2cf39e",
+    "name": "jerboa assassin",
+    "key": "jerboa-assassin"
+  },
+  {
+    "id": "6d1e009f-fd1f-4f4d-9f85-2652867c46ca",
+    "name": "jerboa pyromancer",
+    "key": "jerboa-pyromancer"
+  },
+  {
+    "id": "b432dc94-0da0-423f-aaf6-9d1dc1c405ac",
+    "name": "jerboa soldier",
+    "key": "jerboa-soldier"
+  },
+  {
+    "id": "c6b6147a-0c45-4c51-b203-4ed943ec7bac",
+    "name": "jerboa courier",
+    "key": "jerboa-courier"
+  },
+  {
+    "id": "b714c35f-2b6e-4070-9c08-8f7e0ff8dfbd",
+    "name": "beaver warrior",
+    "key": "beaver-warrior"
+  },
+  {
+    "id": "2e4dc0aa-1e6a-4426-8467-6312f8fb73c9",
+    "name": "beaver guardian",
+    "key": "beaver-guardian"
+  },
+  {
+    "id": "7cccd744-3ac8-4593-a724-944a25c68d60",
+    "name": "beaver architect",
+    "key": "beaver-architect"
+  },
+  {
+    "id": "614f1217-9dc6-4c59-ac1b-b699a2afad72",
+    "name": "grey squirrel archer",
+    "key": "grey-squirrel-archer"
+  },
+  {
+    "id": "4e245727-1229-4e5e-802e-2a4d2ed41c57",
+    "name": "grey squirrel naturalist",
+    "key": "grey-squirrel-naturalist"
+  },
+  {
+    "id": "a485095b-bd20-43d0-abd7-5451f9f1dc73",
+    "name": "grey squirrel crossbowman",
+    "key": "grey-squirrel-crossbowman"
+  },
+  {
+    "id": "8c12f169-b314-466c-a39c-b922ea46a261",
+    "name": "grey squirrel pikeman",
+    "key": "grey-squirrel-pikeman"
+  },
+  {
+    "id": "fbb0033a-dd9d-49f1-af75-06d8fbd58591",
+    "name": "grey squirrel warrior",
+    "key": "grey-squirrel-warrior"
+  },
+  {
+    "id": "26b60b9b-b442-44a1-ab8f-7c84b2299b7f",
+    "name": "grey squirrel guardian",
+    "key": "grey-squirrel-guardian"
+  },
+  {
+    "id": "7a89c3f8-bbf0-4af4-8969-362a13e6ae40",
+    "name": "grey squirrel musketeer",
+    "key": "grey-squirrel-musketeer"
+  },
+  {
+    "id": "e8126766-f00d-47bd-9ad2-7e881de0e6a6",
+    "name": "grey squirrel wizard",
+    "key": "grey-squirrel-wizard"
+  }
+]

@@ -1,0 +1,25 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Local validation runtime, logs and maintenance helpers
+.tools/
+
+# Generated deliveries and temporary work; source assets remain versioned.
+/exports/
+/.tmp/
+/godot.exe
+
+# Local agent settings and credentials are not part of the game client.
+/.agents/
+/.codex/
+.env
+.env.*
+!.env.example
+.dev.vars*
+*.pem
+*.key
+
+# Operating-system metadata.
+.DS_Store
+Thumbs.db

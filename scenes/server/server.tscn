@@ -1,0 +1,19 @@
+[gd_scene format=3 uid="uid://dw8i6445veniq"]
+
+[ext_resource type="Script" uid="uid://dkgdl1j6062tq" path="res://scripts/runtime/match.gd" id="1_fp0pw"]
+[ext_resource type="Script" uid="uid://c88f5hdyvuyh0" path="res://scripts/runtime/regions.gd" id="2_375b0"]
+[ext_resource type="Script" uid="uid://clo4uk27fc4p" path="res://scripts/ui/system_placeholder.gd" id="3_system"]
+
+[node name="Server" type="Node" unique_id=1988460616]
+script = ExtResource("1_fp0pw")
+
+[node name="RegionMap" type="Node" parent="." unique_id=438458396]
+script = ExtResource("2_375b0")
+
+[node name="Network" type="Node" parent="." unique_id=438458397]
+script = ExtResource("3_system")
+responsibility = "Transport, peers, authentication, and snapshots"
+
+[node name="Persistence" type="Node" parent="." unique_id=438458403]
+script = ExtResource("3_system")
+responsibility = "Users, decks, saved Playground state, and diagnostics"

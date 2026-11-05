@@ -1,0 +1,188 @@
+{
+  "group_id": "260f8033-8d74-428e-9299-3bfdd3309916",
+  "states": [
+    {
+      "character": {
+        "id": "4a2d6fe1-3578-4177-8c4e-33b771001ec6",
+        "name": "sitting down, bow no",
+        "prompt": "A mouse archer in simple leather tunic and hood standing in a side-profile stance facing east, holding a slender wooden bow with a taut string, taut posture, slim tail curving behind, minimalist gear, on a blank background.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-19T14:49:13.295498+00:00"
+      },
+      "folder": "sitting_down_bow_no",
+      "frames": {
+        "rotations": {
+          "south": "sitting_down_bow_no/rotations/south.png",
+          "south-east": "sitting_down_bow_no/rotations/south-east.png",
+          "east": "sitting_down_bow_no/rotations/east.png",
+          "north-east": "sitting_down_bow_no/rotations/north-east.png",
+          "north": "sitting_down_bow_no/rotations/north.png",
+          "north-west": "sitting_down_bow_no/rotations/north-west.png",
+          "west": "sitting_down_bow_no/rotations/west.png",
+          "south-west": "sitting_down_bow_no/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    },
+    {
+      "character": {
+        "id": "de24441b-2593-4768-a979-eb9d16a69977",
+        "name": "standing up",
+        "prompt": "A mouse archer in simple leather tunic and hood standing in a side-profile stance facing east, holding a slender wooden bow with a taut string, taut posture, slim tail curving behind, minimalist gear, on a blank background.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-19T16:12:19.672821+00:00"
+      },
+      "folder": "standing_up",
+      "frames": {
+        "rotations": {
+          "south": "standing_up/rotations/south.png",
+          "south-east": "standing_up/rotations/south-east.png",
+          "east": "standing_up/rotations/east.png",
+          "north-east": "standing_up/rotations/north-east.png",
+          "north": "standing_up/rotations/north.png",
+          "north-west": "standing_up/rotations/north-west.png",
+          "west": "standing_up/rotations/west.png",
+          "south-west": "standing_up/rotations/south-west.png"
+        },
+        "animations": {
+          "Walking": {
+            "south-west": [
+              "standing_up/animations/Walking/south-west/frame_000.png",
+              "standing_up/animations/Walking/south-west/frame_001.png",
+              "standing_up/animations/Walking/south-west/frame_002.png",
+              "standing_up/animations/Walking/south-west/frame_003.png",
+              "standing_up/animations/Walking/south-west/frame_004.png",
+              "standing_up/animations/Walking/south-west/frame_005.png",
+              "standing_up/animations/Walking/south-west/frame_006.png",
+              "standing_up/animations/Walking/south-west/frame_007.png"
+            ],
+            "north-east": [
+              "standing_up/animations/Walking/north-east/frame_000.png",
+              "standing_up/animations/Walking/north-east/frame_001.png",
+              "standing_up/animations/Walking/north-east/frame_002.png",
+              "standing_up/animations/Walking/north-east/frame_003.png",
+              "standing_up/animations/Walking/north-east/frame_004.png",
+              "standing_up/animations/Walking/north-east/frame_005.png",
+              "standing_up/animations/Walking/north-east/frame_006.png",
+              "standing_up/animations/Walking/north-east/frame_007.png"
+            ],
+            "north": [
+              "standing_up/animations/Walking/north/frame_000.png",
+              "standing_up/animations/Walking/north/frame_001.png",
+              "standing_up/animations/Walking/north/frame_002.png",
+              "standing_up/animations/Walking/north/frame_003.png",
+              "standing_up/animations/Walking/north/frame_004.png",
+              "standing_up/animations/Walking/north/frame_005.png",
+              "standing_up/animations/Walking/north/frame_006.png",
+              "standing_up/animations/Walking/north/frame_007.png"
+            ],
+            "east": [
+              "standing_up/animations/Walking/east/frame_000.png",
+              "standing_up/animations/Walking/east/frame_001.png",
+              "standing_up/animations/Walking/east/frame_002.png",
+              "standing_up/animations/Walking/east/frame_003.png",
+              "standing_up/animations/Walking/east/frame_004.png",
+              "standing_up/animations/Walking/east/frame_005.png",
+              "standing_up/animations/Walking/east/frame_006.png",
+              "standing_up/animations/Walking/east/frame_007.png"
+            ],
+            "west": [
+              "standing_up/animations/Walking/west/frame_000.png",
+              "standing_up/animations/Walking/west/frame_001.png",
+              "standing_up/animations/Walking/west/frame_002.png",
+              "standing_up/animations/Walking/west/frame_003.png",
+              "standing_up/animations/Walking/west/frame_004.png",
+              "standing_up/animations/Walking/west/frame_005.png",
+              "standing_up/animations/Walking/west/frame_006.png",
+              "standing_up/animations/Walking/west/frame_007.png"
+            ],
+            "south-east": [
+              "standing_up/animations/Walking/south-east/frame_000.png",
+              "standing_up/animations/Walking/south-east/frame_001.png",
+              "standing_up/animations/Walking/south-east/frame_002.png",
+              "standing_up/animations/Walking/south-east/frame_003.png",
+              "standing_up/animations/Walking/south-east/frame_004.png",
+              "standing_up/animations/Walking/south-east/frame_005.png",
+              "standing_up/animations/Walking/south-east/frame_006.png",
+              "standing_up/animations/Walking/south-east/frame_007.png"
+            ],
+            "south": [
+              "standing_up/animations/Walking/south/frame_000.png",
+              "standing_up/animations/Walking/south/frame_001.png",
+              "standing_up/animations/Walking/south/frame_002.png",
+              "standing_up/animations/Walking/south/frame_003.png",
+              "standing_up/animations/Walking/south/frame_004.png",
+              "standing_up/animations/Walking/south/frame_005.png",
+              "standing_up/animations/Walking/south/frame_006.png",
+              "standing_up/animations/Walking/south/frame_007.png"
+            ],
+            "north-west": [
+              "standing_up/animations/Walking/north-west/frame_000.png",
+              "standing_up/animations/Walking/north-west/frame_001.png",
+              "standing_up/animations/Walking/north-west/frame_002.png",
+              "standing_up/animations/Walking/north-west/frame_003.png",
+              "standing_up/animations/Walking/north-west/frame_004.png",
+              "standing_up/animations/Walking/north-west/frame_005.png",
+              "standing_up/animations/Walking/north-west/frame_006.png",
+              "standing_up/animations/Walking/north-west/frame_007.png"
+            ]
+          },
+          "Standing_to_action_-_south": {
+            "south": [
+              "standing_up/animations/Standing_to_action_-_south/south/frame_000.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_001.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_002.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_003.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_004.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_005.png",
+              "standing_up/animations/Standing_to_action_-_south/south/frame_006.png"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "character": {
+        "id": "0d9701ae-c7ee-4e73-a24f-d9a84c577377",
+        "name": "action",
+        "prompt": "A mouse archer in simple leather tunic and hood standing in a side-profile stance facing east, holding a slender wooden bow with a taut string, taut posture, slim tail curving behind, minimalist gear, on a blank background.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-19T19:34:24.061691+00:00"
+      },
+      "folder": "action",
+      "frames": {
+        "rotations": {
+          "south": "action/rotations/south.png",
+          "south-east": "action/rotations/south-east.png",
+          "east": "action/rotations/east.png",
+          "north-east": "action/rotations/north-east.png",
+          "north": "action/rotations/north.png",
+          "north-west": "action/rotations/north-west.png",
+          "west": "action/rotations/west.png",
+          "south-west": "action/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-10-20T08:33:56.998048"
+}

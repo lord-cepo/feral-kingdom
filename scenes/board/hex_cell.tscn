@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://8udbxhlqvk3l"]
+
+[ext_resource type="Script" uid="uid://o0g15kveddn3" path="res://scripts/board/hex_cell.gd" id="1_cell"]
+
+[sub_resource type="ConvexPolygonShape2D" id="HexShape"]
+points = PackedVector2Array(130, 0, 65, 86.66667, -65, 86.66667, -130, 0, -65, -86.66667, 65, -86.66667)
+
+[node name="HexCell" type="Area2D" unique_id=337044485]
+script = ExtResource("1_cell")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1729153844]
+shape = SubResource("HexShape")
+
+[node name="HexFrame" type="Sprite2D" parent="." unique_id=72155960]
+modulate = Color(1, 1, 1, 0.4)
+texture_filter = 1
+position = Vector2(-1.428571, -90.222222)
+scale = Vector2(2.857143, 2.888889)
+
+[node name="UnitFigures" type="Node2D" parent="." unique_id=72155961]
+position = Vector2(0, -26)
+
+[node name="CoordinateLabel" type="RichTextLabel" parent="." unique_id=1182718008]
+offset_left = -90.0
+offset_top = 26.0
+offset_right = 90.0
+offset_bottom = 74.0
+bbcode_enabled = true
+text = "(0, 0)"
+horizontal_alignment = 1
+vertical_alignment = 1
+scroll_active = false

@@ -1,0 +1,21 @@
+{
+  "name": "Standing to action - south",
+  "character_id": "de24441b-2593-4768-a979-eb9d16a69977",
+  "animation_group_id": "71b00682-3793-4a0a-9d88-49ad0d7026ff",
+  "animation_id": "bbca6666-e3b8-4120-ba8a-21072319ddaa",
+  "direction": "south",
+  "frame_count": 7,
+  "width": 132,
+  "height": 108,
+  "fps": 10,
+  "loop": false,
+  "frames": [
+    "south/frame_000.png",
+    "south/frame_001.png",
+    "south/frame_002.png",
+    "south/frame_003.png",
+    "south/frame_004.png",
+    "south/frame_005.png",
+    "south/frame_006.png"
+  ]
+}

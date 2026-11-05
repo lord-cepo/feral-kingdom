@@ -1,0 +1,47 @@
+{
+  "group_id": "260f8033-8d74-428e-9299-3bfdd3309916",
+  "states": [
+    {
+      "character": {
+        "id": "d9e5d65e-4b81-48cc-91ce-0ebe88845dba",
+        "name": "Idle",
+        "prompt": "A mouse archer in simple leather tunic and hood standing in a side-profile stance facing east, holding a slender wooden bow with a taut string, taut posture, slim tail curving behind, minimalist gear, on a blank background.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-19T13:41:48.132524+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "Walking": {
+            "south": [
+              "Idle/animations/Walking/south/frame_000.png",
+              "Idle/animations/Walking/south/frame_001.png",
+              "Idle/animations/Walking/south/frame_002.png",
+              "Idle/animations/Walking/south/frame_003.png",
+              "Idle/animations/Walking/south/frame_004.png",
+              "Idle/animations/Walking/south/frame_005.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-10-19T14:00:52.912745"
+}

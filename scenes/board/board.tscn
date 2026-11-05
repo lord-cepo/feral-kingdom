@@ -1,0 +1,52 @@
+[gd_scene format=3 uid="uid://c3vfmwefr3ssy"]
+
+[ext_resource type="Script" uid="uid://djklnobjxyaoc" path="res://scripts/board/board.gd" id="1_board"]
+[ext_resource type="Texture2D" path="res://assets/maps/pixellab-battlefield.png" id="2_terrain"]
+[ext_resource type="Script" path="res://scripts/board/board_ambience.gd" id="3_ambience"]
+[ext_resource type="Script" path="res://scripts/board/screen_leaves.gd" id="4_leaves"]
+[ext_resource type="Shader" path="res://assets/shaders/terrain_edge_fill.gdshader" id="5_edge_fill"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_edge_fill"]
+shader = ExtResource("5_edge_fill")
+
+[node name="Board" type="Node2D" unique_id=267515857]
+script = ExtResource("1_board")
+
+[node name="BoardBackground" type="Node2D" parent="." unique_id=330875682]
+z_index = -10
+
+[node name="Terrain" type="Sprite2D" parent="BoardBackground"]
+material = SubResource("ShaderMaterial_edge_fill")
+texture_filter = 1
+texture = ExtResource("2_terrain")
+centered = false
+
+[node name="Ambience" type="Node2D" parent="."]
+z_index = -5
+script = ExtResource("3_ambience")
+
+[node name="HexGrid" type="Node2D" parent="." unique_id=975993949]
+
+[node name="BoardHighlights" type="Node2D" parent="." unique_id=1003138650]
+
+[node name="Units" type="Node2D" parent="." unique_id=1556925190]
+
+[node name="Bombs" type="Node2D" parent="." unique_id=1907750159]
+
+[node name="Projectiles" type="Node2D" parent="." unique_id=1409495760]
+
+[node name="ResolutionEffects" type="Node2D" parent="." unique_id=270925620]
+
+[node name="PersistentEffects" type="Node2D" parent="." unique_id=278187105]
+
+[node name="BoardInteraction" type="Node2D" parent="." unique_id=235863698]
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=621963105]
+position = Vector2(640, 360)
+
+[node name="Interface" type="CanvasLayer" parent="." unique_id=2052598616]
+layer = 2
+
+[node name="ScreenLeaves" type="CanvasLayer" parent="."]
+layer = 1
+script = ExtResource("4_leaves")
