@@ -5,10 +5,15 @@
 # Local validation runtime, logs and maintenance helpers
 .tools/
 
-# Generated deliveries and temporary work; source assets remain versioned.
+# Generated deliveries and temporary work; runtime assets remain versioned.
 /exports/
 /.tmp/
 /godot.exe
+
+# Editable character frames stay local; the game uses the generated sheets.
+/assets/characters/*
+!/assets/characters/sheets/
+/assets/A_mouse_archer_in_simple-Idle/
 
 # Local agent settings and credentials are not part of the game client.
 /.agents/

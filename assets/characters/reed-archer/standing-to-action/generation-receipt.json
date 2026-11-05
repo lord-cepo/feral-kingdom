@@ -1,9 +1,0 @@
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "character: de24441b-2593-4768-a979-eb9d16a69977\nanimation: v3 custom (Transition smoothly from the supplied standing pose into the supplied drawn-bow action pose. The south-facing mouse archer raises the bow, brings the drawing hand back and pulls the bowstring taut, finishing in exactly the reference action pose and holding aim without releasing. Keep both feet planted, body centered and facing south, consistent hood, ears, outfit, bow and pixel-art identity, fixed camera and transparent background. Small deliberate arm and shoulder motion; no walking, turning, camera movement or extra objects.)\ndirections: south (1 jobs)\njob_ids: south=911a1092-abfe-43ab-8bc9-19a4c3df56e0\ngroup: 71b00682-3793-4a0a-9d88-49ad0d7026ff\nframes: 7 (1 reference + 6 animated)\ncanvas: south 92x84 (generated at this size; with custom frames the stored canvas is re-measured around the motion)\ncost: 1 generation (1/dir x 1)\neta: ~2-4 min/direction\n\nhint: get_character(character_id=\"de24441b-2593-4768-a979-eb9d16a69977\")\nadd more directions to this group: animate_character(character_id=\"de24441b-2593-4768-a979-eb9d16a69977\", action_description=\"Transition smoothly from the supplied standing pose into the supplied drawn-bow action pose. The south-facing mouse archer raises the bow, brings the drawing hand back and pulls the bowstring taut, finishing in exactly the reference action pose and holding aim without releasing. Keep both feet planted, body centered and facing south, consistent hood, ears, outfit, bow and pixel-art identity, fixed camera and transparent background. Small deliberate arm and shoulder motion; no walking, turning, camera movement or extra objects.\", animation_group_id=\"71b00682-3793-4a0a-9d88-49ad0d7026ff\", directions=[...])"
-    }
-  ],
-  "isError": false
-}

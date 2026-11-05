@@ -12,7 +12,7 @@ Cloudflare relay; players do not need to run a server or forward ports.
    ZIP. Alternatively, clone it:
 
    ```sh
-   git clone https://github.com/lord-cepo/feral-kingdom.git
+   git clone --depth 1 https://github.com/lord-cepo/feral-kingdom.git
    ```
 
 3. In Godot's Project Manager, choose **Import** and select `project.godot` from
@@ -22,6 +22,12 @@ Cloudflare relay; players do not need to run a server or forward ports.
 
 All runtime assets are included. Normal play requires no Python, Node.js,
 PixelLab account, Cloudflare account or API keys. Godot itself is not bundled.
+
+Character animations use the optimized sprite sheets in
+`assets/characters/sheets/`. Original individual character frames are excluded
+from this repository; they are needed only for artwork editing and rebuilding
+the sheets. Other individual images, including interface, terrain and effects,
+remain included because the game uses them.
 
 ## Play with another person
 
@@ -71,3 +77,7 @@ python tools/generate_network_fingerprint.py
 Godot automatically imports source assets and builds its local `.godot` cache.
 Generated caches, local tools, exported bundles and credentials are excluded from
 Git. Tests are opt-in under this project's `AGENTS.md` instructions.
+
+The character import/alignment/sheet-building tools require the original source
+frames in addition to Python/Pillow. Those source frames are kept separately
+from the playable client.
