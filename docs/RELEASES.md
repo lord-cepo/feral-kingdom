@@ -41,3 +41,7 @@ players must use the same source/rules fingerprint. A build/export check is
 separate from gameplay regression tests; run those only when requested under
 `AGENTS.md`'s TEST policy. A completed two-device match and reconnect check remain
 release acceptance work.
+
+## Linux x86_64
+
+The Linux export preset uses the same runtime inputs and compatibility fingerprint as Windows. Install `linux_release.x86_64` from the official 4.7.2 templates alongside the shared ICU data, export with `--export-release Linux exports/linux/FeralKingdom.x86_64`, then run `python tools/package_linux_release.py`. The packager checks ELF x86_64 architecture and all PCK payloads and builds a tar.gz with executable permissions, notices, build identity and SHA-256. Extract the entire archive and run `./FeralKingdom.x86_64`. Linux runtime and cross-platform multiplayer verification require a Linux desktop; packaging on Windows does not establish those results.
