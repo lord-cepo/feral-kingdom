@@ -96,3 +96,10 @@ reconnect during a paid target choice and a two-player trigger gate, checking
 identical state, stale-choice rejection and exactly-once costs. Web exports also
 need their hosting origin allowed by the relay; native clients send no browser
 Origin header.
+
+### Simplified entry and room flow
+Startup `_build_welcome` asks for a display name; `_play` saves it in `user://player_name.txt`, independently of versioned reconnect state. Future launches prefill the field and expose Play. Builder defaults to 12 units.
+`NetworkLobby.setup` creates host settings, one deck picker and Create room. `show_mode` connects automatically; Find polls listings without a refresh button. `_create_room` and `_join_room` call `_capture_army` to validate size, distinct catalogue identities and exactly one hero before sending. `_refresh` submits the captured deck once after the room acknowledgement; the host requests start once both authenticated seats are connected and ready. Existing relay validation and host army validation still apply. Example: Play → Host → room title/settings/deck → Create room; opponent uses Play → Find → deck → room row. No manual Ready/Start steps remain.
+Names and saved deck collections remain local. The relay retains the selected decks plus bounded transport/session/room metadata, never authoritative simulated game state. This change requires no relay deployment.
+`NetworkLobby._leave_lobby` is connected to the host-only Leave lobby button while a room exists. It clears pending automatic deck/start state and sends the authenticated leave command; the relay closes the host room and the next lobby update restores Create room.
+Online preview switching: `_can_switch_pending_action` allows the owning player to cancel an unpaid preview. `_on_effect_completed` retains the requested replacement online; controller `_process` waits for host acknowledgement, drained replay, idle rules and connected peers before submitting it normally. Example: select a unit, press 2 or click Bow to replace Walk; clicking another friendly unit uses the same gate. Paid actions remain protected.

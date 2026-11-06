@@ -1040,3 +1040,4 @@ The manifest/alignment include all 63 appearances. No generation was requested.
 `tests/synergy_units_test.tscn` is the opt-in behavioral regression scene.
 The catalogue exporter now enumerates `CardCatalogue.all_units()` across both
 definition files; `unit-catalogue.html` includes all 80 implemented definitions.
+`army_menu.gd`: centered landing navigation eases upward on entry. Build shows catalogue, selected army, and hover rules in three columns. Toggle/load/size call `_refresh_selection`; either list calls `_inspect_unit`. Click a selected army row to remove it.

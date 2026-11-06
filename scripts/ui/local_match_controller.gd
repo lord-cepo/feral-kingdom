@@ -491,6 +491,7 @@ func _refresh_hover_panel() -> void:
 ## Only health labels carry life_unit metadata; other rule/counter labels are skipped before lookup to avoid missing-metadata errors.
 ## Normalized viewport coordinates account for canvas_items window stretching; the shader measures its 80px radius and 20px ring in rendered pixels.
 func _process(_delta: float) -> void:
+	_resume_online_switch()
 	if hover_panel == null or not is_instance_valid(board): return
 	var waiting: EffectExecution = Match.rules_runner.presentation_waiting
 	var on_blink: bool = phase_sign != null and phase_sign.contains_trigger_blink(get_viewport().get_mouse_position()) and waiting != null
@@ -1286,9 +1287,9 @@ func _action_icon(action: StringName) -> String:
 ## RulesRunner.command_finished connects here; this handler never spends tokens.
 ## Cancelling for a unit switch first deselects the old unit (sit), then selects the new one (stand) after runner release.
 func _on_effect_completed(success: bool, cost_paid: bool, _action_free: bool) -> void:
-	if NetworkSession.online:
-		pending_unit_switch_id = -1
-		pending_action_switch_index = -1
+	if NetworkSession.online and (pending_unit_switch_id >= 0 or pending_action_switch_index >= 0):
+		_queue_hud_refresh()
+		return
 	if pending_unit_switch_id >= 0:
 		var next_unit := pending_unit_switch_id
 		pending_unit_switch_id = -1
@@ -1316,7 +1317,7 @@ func _on_effect_completed(success: bool, cost_paid: bool, _action_free: bool) ->
 ## The number keys and selected card's action buttons use this to allow a safe action switch.
 ## Online switching waits for explicit cancellation/host confirmation instead of starting an unreplicated follow-up from a completion signal.
 func _can_switch_pending_action() -> bool:
-	if NetworkSession.online: return false
+	if NetworkSession.online and (NetworkSession.local_player != Match.active_player or NetworkSession.pending_command): return false
 	var execution := Match.rules_runner.active
 	return execution != null and execution.defer_cost_until_target and not execution.cost_paid \
 		and execution.status == EffectExecution.Status.CONSEQUENCE and execution.current != null \
@@ -1508,3 +1509,23 @@ func _set_side_portrait_hover(unit_id: int) -> void:
 	for list in card_lists.values():
 		for card in list.get_children():
 			if card.has_method("set_hovered"): card.set_hovered(int(card.get_meta("unit_id", -1)) == unit_id)
+
+## Frame polling resumes locally requested online switches only after authoritative cancellation and replay settle.
+## Turn changes discard requests; disconnected peers pause them. Replacement actions use the normal authenticated submit path.
+func _resume_online_switch() -> void:
+	if not NetworkSession.online: return
+	if pending_unit_switch_id < 0 and pending_action_switch_index < 0: return
+	if NetworkSession.local_player != Match.active_player or Match.winner != 0:
+		pending_unit_switch_id = -1
+		pending_action_switch_index = -1
+		return
+	if NetworkSession.pending_command or not NetworkSession.incoming.is_empty() or Match.rules_runner.busy() or not NetworkSession.both_connected(): return
+	if pending_unit_switch_id >= 0:
+		var next_unit := pending_unit_switch_id
+		pending_unit_switch_id = -1
+		pending_action_switch_index = -1
+		_select_unit(next_unit)
+	else:
+		var next_action := pending_action_switch_index
+		pending_action_switch_index = -1
+		_begin_unit_action(selected_unit_id, next_action)

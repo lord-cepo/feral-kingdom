@@ -4,7 +4,10 @@ var catalogue: Array[UnitInfo] = []
 var selected: Array[String] = []
 var checks: Dictionary = {}
 var decks: Dictionary = {}
-var army_size := 8
+var army_size := 12
+var army_rows: VBoxContainer
+var landing_space: Control
+var menu_tween: Tween
 var body: VBoxContainer
 var builder: VBoxContainer
 var count_label: Label
@@ -17,6 +20,9 @@ var search_count: Label
 var info_panel: PanelContainer
 var info_scroll: ScrollContainer
 var inspected_key := ""
+var welcome: HBoxContainer
+var navigation: HBoxContainer
+var player_name: LineEdit
 var network_lobby: VBoxContainer
 const UnitChoice = preload("res://scripts/ui/army_unit_choice.gd")
 
@@ -38,33 +44,43 @@ func _ready() -> void:
 	add_child(margin)
 	body = VBoxContainer.new()
 	margin.add_child(body)
+	landing_space = Control.new()
+	landing_space.custom_minimum_size.y = size.y * 0.28
+	body.add_child(landing_space)
 	var title := Label.new()
-	title.text = "GUERRA · Armies"
+	title.text = "Feral-Kingdom"
 	title.add_theme_font_size_override("font_size", 40)
 	body.add_child(title)
-	var navigation := HBoxContainer.new()
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	navigation = HBoxContainer.new()
 	body.add_child(navigation)
+	navigation.alignment = BoxContainer.ALIGNMENT_CENTER
+	navigation.add_theme_constant_override("separation", 20)
 	for caption in ["Host", "Find", "Build"]:
 		var button := Button.new()
 		button.text = caption
-		button.custom_minimum_size = Vector2(140, 48)
+		button.custom_minimum_size = Vector2(170, 56)
 		button.pressed.connect(_navigate.bind(caption))
 		navigation.add_child(button)
 	message = Label.new()
 	message.text = "Build and save an army from the complete catalogue."
 	body.add_child(message)
 	_build_info_panel()
+	_build_welcome()
 
 ## Navigation buttons clear the inspector and reveal the animated builder or persistent relay lobby.
 ## First Build entry constructs the catalogue/editor once; subsequent visits retain choices without reloading portraits.
 func _navigate(destination: String) -> void:
+	if menu_tween != null: menu_tween.kill()
+	menu_tween = create_tween()
+	menu_tween.tween_property(landing_space, "custom_minimum_size:y", 0.0, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	info_panel.hide()
 	inspected_key = ""
 	var show_builder := destination == "Build"
 	if show_builder and builder == null:
 		catalogue = CardCatalogue.all_units(1)
 		_build_editor()
-		info_panel.move_to_front()
+		info_panel.show()
 	if builder != null: builder.visible = show_builder
 	if network_lobby != null: network_lobby.visible = not show_builder
 	if not show_builder:
@@ -74,7 +90,7 @@ func _navigate(destination: String) -> void:
 			body.add_child(network_lobby)
 			network_lobby.setup(decks)
 		network_lobby.show_mode(destination == "Host", decks)
-	message.text = "Choose distinct units, then name and save your army." if show_builder else "Choose an army, ready up, then the host starts the match."
+	message.text = "Choose distinct units, then name and save your army." if show_builder else "Choose your army and create or join a room."
 	if show_builder:
 		builder.modulate.a = 0.0
 		create_tween().tween_property(builder, "modulate:a", 1.0, 0.2)
@@ -88,6 +104,7 @@ func _build_editor() -> void:
 	builder.add_child(toolbar)
 	var sizes := OptionButton.new()
 	for size in [8, 12, 16]: sizes.add_item("%d units" % size, size)
+	sizes.select(1)
 	sizes.item_selected.connect(_resize_army.bind(sizes))
 	toolbar.add_child(sizes)
 	count_label = Label.new()
@@ -116,7 +133,22 @@ func _build_editor() -> void:
 	builder.add_child(search_count)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	builder.add_child(scroll)
+	var columns := HBoxContainer.new()
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_theme_constant_override("separation", 18)
+	builder.add_child(columns)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(scroll)
+	var army_scroll := ScrollContainer.new()
+	army_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(army_scroll)
+	army_rows = VBoxContainer.new()
+	army_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	army_scroll.add_child(army_rows)
+	info_panel.get_parent().remove_child(info_panel)
+	columns.add_child(info_panel)
+	info_panel.custom_minimum_size.x = 340
+	info_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(rows)
@@ -166,12 +198,9 @@ func _build_info_panel() -> void:
 	resized.connect(_layout_info_panel)
 	_layout_info_panel()
 
-## Root resize and card changes keep the inspector 20px from the bottom/right, with room for long-card scrolling.
+## Resize and hover callers leave geometry to the builder column container.
 func _layout_info_panel() -> void:
-	info_panel.offset_left = -500.0
-	info_panel.offset_right = -20.0
-	info_panel.offset_top = -minf(440.0, size.y * 0.6) - 20.0
-	info_panel.offset_bottom = -20.0
+	pass
 
 ## Row mouse_entered/focus_entered immediately replaces the pinned card, with no tooltip timer or appearance fade.
 func _inspect_unit(key: String) -> void:
@@ -237,8 +266,23 @@ func _toggle_unit(enabled: bool, key: String) -> void:
 		selected.erase(key)
 	_refresh_selection()
 
-## Selection and load/size changes refresh the exact-size save gate.
+## Toggle/load/size callers rebuild comparison rows; clicking a selected row removes its catalogue identity.
 func _refresh_selection() -> void:
+	if army_rows != null:
+		for child in army_rows.get_children():
+			army_rows.remove_child(child)
+			child.queue_free()
+		for key in selected:
+			var row := Button.new()
+			row.text = checks[key].text
+			row.icon = checks[key].icon
+			row.expand_icon = true
+			row.add_theme_constant_override("icon_max_width", 64)
+			row.custom_minimum_size.y = 76
+			row.mouse_entered.connect(_inspect_unit.bind(key))
+			row.focus_entered.connect(_inspect_unit.bind(key))
+			row.pressed.connect(checks[key].set_pressed.bind(false))
+			army_rows.add_child(row)
 	count_label.text = "%d / %d selected" % [selected.size(), army_size]
 	save_button.disabled = selected.size() != army_size
 
@@ -285,3 +329,37 @@ func _load_deck(sizes: OptionButton) -> void:
 	deck_name.text = title
 	_refresh_selection()
 	message.text = "Loaded army: " + title + ". Review the selection before saving."
+
+
+## Startup asks for a locally remembered display name before exposing navigation; Play persists it independently of build/session caches.
+func _build_welcome() -> void:
+	navigation.hide()
+	welcome = HBoxContainer.new()
+	welcome.alignment = BoxContainer.ALIGNMENT_CENTER
+	body.add_child(welcome)
+	player_name = LineEdit.new()
+	player_name.placeholder_text = "Your name"
+	player_name.max_length = 32
+	player_name.custom_minimum_size.x = 260
+	if FileAccess.file_exists("user://player_name.txt"):
+		player_name.text = FileAccess.get_file_as_string("user://player_name.txt").strip_edges()
+	welcome.add_child(player_name)
+	var play := Button.new()
+	play.text = "Play"
+	play.pressed.connect(_play)
+	player_name.text_submitted.connect(func(_text: String) -> void: _play())
+	welcome.add_child(play)
+	message.text = "Welcome. Choose the name other players will see."
+
+## Play and name-field Enter accept a nonempty name, save it locally, and reveal the main menu.
+func _play() -> void:
+	var chosen := player_name.text.strip_edges()
+	if chosen.is_empty():
+		message.text = "Enter your name to play."
+		return
+	NetworkSession.nickname = chosen
+	var file := FileAccess.open("user://player_name.txt", FileAccess.WRITE)
+	if file != null: file.store_string(chosen)
+	welcome.hide()
+	navigation.show()
+	message.text = "Host a room, find a game, or build your army."

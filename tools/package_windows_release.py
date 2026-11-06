@@ -62,11 +62,12 @@ def main():
         'Keep FeralKingdom.pck and icudt_godot.dat beside the executable.\n'
         'Godot does not need to be installed.\n\n'
         'Build and save an army with exactly one hero. One player chooses Host;\n'
-        'the other chooses Find. Pick matching armies, both press Ready, then\n'
-        'the host presses Start game. Both players need the same release.\n'
+        'the other chooses Find. Choose your deck and create or join a room;\n'
+        'the match starts automatically. Both players need the same release.\n'
         'Internet is required for multiplayer; the relay is already configured.\n\n'
-        'Development playtest: export/package checks passed. Gameplay tests and\n'
-        'a full two-device multiplayer/reconnect session have not been run.\n\n'
+        'Development playtest: automated network, local match, presentation,\n'
+        'selection, combat and relay checks passed. A full two-device\n'
+        'multiplayer/reconnect session remains to be verified.\n\n'
         'Updates and issue reports: https://github.com/lord-cepo/feral-kingdom\n', encoding='utf-8')
     notices = OUTPUT / 'LICENSES'
     notices.mkdir(exist_ok=True)

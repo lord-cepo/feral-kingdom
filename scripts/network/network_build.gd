@@ -2,4 +2,4 @@
 extends RefCounted
 const GAME_VERSION := "0.1.0"
 const PROTOCOL_VERSION := 1
-const RULES_HASH := "07876e048b25df18308e80412373c6ca94bd4ffdb3343187e1babcdc4552cacf"
+const RULES_HASH := "fdbcb693f53b3301b4989bae3086fd2889c66f0bfb2c90c17119216bd82b2950"
