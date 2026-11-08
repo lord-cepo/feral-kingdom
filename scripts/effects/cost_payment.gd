@@ -6,7 +6,7 @@ extends RefCounted
 ## Checks cumulative counter/activity spending before mutating any selected resource.
 ## EffectExecution calls after collecting identities/amounts without payment; live bindings and cumulative ledgers reject stale or overspent X.
 ## Selection-only anchors do not mutate; Disable/Return/Sacrifice reserve departures and deployment payments share a cumulative player ledger.
-## A committed Sacrifice records actual life before defeat so the Alchemist can read its paid amount.
+## Sacrifice records actual life before defeat. Shield payment adds protection to the selected enemy hero before consequences.
 static func commit(choices: Array[PhraseExecution]) -> String:
 	var counters: Dictionary = {}
 	var activity: Dictionary = {}
@@ -42,6 +42,8 @@ static func commit(choices: Array[PhraseExecution]) -> String:
 			var maximum: int = verb.user_params[1]
 			if value.x <= 0 or value.x < actual or value.y < maximum: return "The complete life payment cannot be paid."
 			life[target.id] = Vector2i(mini(value.x - actual, value.y - maximum), value.y - maximum)
+		elif verb.name == &"shield":
+			if not verb.atomic_cost: return "Shield payment requires the explicit enemy-hero variant."
 		elif verb.name == &"next_turn_actions":
 			pass # Positive grants have no spendable balance; identity/amount legality was checked above.
 		elif verb.name == &"choose_counter_unit":
@@ -73,6 +75,9 @@ static func commit(choices: Array[PhraseExecution]) -> String:
 			choice.chosen_amount = Match.get_unit(target.id).actual_life
 			SynergyActions.sacrifice(choice.subject, target)
 			continue # Sacrifice and Die were published by the shared mutation.
+		elif verb.name == &"shield":
+			Action.shield(choice.subject, target, int(verb.user_params[0]), false, true)
+			continue # Shield publishes its own occurrence before consequences.
 		elif verb.name == &"decrement":
 			var amount: int = verb.user_params[0]
 			Match.get_property(target).value -= amount

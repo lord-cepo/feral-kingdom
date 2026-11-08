@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-GAME_VERSION = '0.1.1'
+GAME_VERSION = '0.1.2'
 
 
 def main():

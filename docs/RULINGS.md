@@ -348,12 +348,14 @@ origin, restoration merges using ordinary same-hex damage/Pierce rules.
 - Mole Alchemist reads the actual life immediately before the paid Sacrifice.
   Flying Squirrel Thief reads the captured +1/+1 change and grants deployment
   before resolving Revive, even if no card can be revived.
-- Rat Hunter checks positive stored Projectiles at attack declaration and may
-  only retreat one adjacent step strictly farther from that attacker.
+- Rat Hunter checks positive stored Projectiles on the friendly actor when
+  they start Bash or declare Bow, Fire or Cannon. Its one-step retreat must
+  increase distance from that actor.
 - Guinea Pig Berserker earns Soul on its own Bash declaration and retains the
   paid X through the Walk and modifier grant. The latter expires at enemy End.
 - Mara Merchant allows enemy control, never neutral control. Red Squirrel
-  Paladin's second Shield explicitly permits only the opposing deployed hero.
+  Paladin pays self-Stun and Shield on the opposing deployed hero before
+  shielding its selected friendly Bash participant.
 - Jerboa Pirate's Walk requires a reachable Bash destination when one exists.
   The live bonus changes only other friends' Walk range.
 

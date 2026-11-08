@@ -153,10 +153,11 @@ shadow resource ledger. Two decrements of 2 cannot spend the same counter of 3;
 two activity payments cannot spend the same activity. Only after full preflight
 does the bundle commit, with followups deferred until the whole payment finishes.
 
-Supported bundle verbs are built-in self-Stun (with its authored positive amount),
-deactivate, decrement, life payment, next-turn-action payment and the explicit
-selection-only `choose_counter_unit` anchor. Variable decrements bind their
-positive X through the retained phrase before cumulative preflight.
+Supported bundle verbs include self-Stun, deactivate, decrement, life payment,
+next-turn-action grants, Sacrifice, Disable, Return, deployment spending and
+the selection-only `choose_counter_unit` anchor. The explicit enemy-hero
+Shield variant can be a payment and publishes Shield before consequences.
+Variable decrements bind their positive X before cumulative preflight.
 Custom mutation costs, optional payment members, ALL costs, and costs that need
 newly created targets are rejected or outside this interface. New atomic cost
 types require explicit preflight and commit support, not an arbitrary Callable

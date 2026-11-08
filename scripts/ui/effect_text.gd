@@ -98,7 +98,7 @@ static func effect_option_text(option: EffectOption, unit: UnitInfo) -> String:
 ## Compact numeric actions omit default [AS]; written consequences and conversions show their payment before the colon.
 ## Captured attack-family guards join Hit/Wound wording directly instead of repeating a separate 'if contact' clause.
 ## A counter removed from an enemy and awarded to SELF is described as a transfer, retaining its authored resource/activity payment.
-## Prior-Stun and gained-own-region guards fold into their trigger anchor instead of separate technical 'if' clauses.
+## Prior-Stun and region guards fold into their trigger text. Guards that only check required targets are implicit.
 static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 	if effect == null: return "Missing effect."
 	var consequence := _steps(effect.consequence, unit, effect.event == null)
@@ -129,8 +129,6 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		if effect.condition is SynergyRules.AttackKind and effect.event.observed_action in [&"hit", &"wound"]:
 			event_text += " with " + _action(effect.condition.family, unit)
 		if effect.condition is HeroCatalogue.NearbySacrifice: event_text = "friend is sacrificed within 2"
-		if effect.event.observed_action == &"life_increase" and effect.event.detail_constraints == {"actual": 1, "maximum": 1}:
-			event_text = "an adjacent enemy hero gains +1 current and +1 maximum life"
 		if _nonwounding_hit(effect): event_text = event_text.replace(" hits ", " hits without wounding ")
 		if effect.event.observed_action == &"life_increase" and effect.condition is Condition.EventPositive:
 			var actor := _query(effect.event.subject, unit, true) if effect.event.subject is QuerySelector else _selector(effect.event.subject, unit)
@@ -143,7 +141,8 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		and effect.consequence.phrases.size() == 2 and effect.consequence.phrases[0].verb.name == &"choose_bashing"
 	if effect.condition != null and not effect.cost is Effect.CostBundle and not effect.condition is Condition.EventPositive \
 			and not effect.condition is HeroCatalogue.NearbySacrifice and not effect.condition is SynergyRules.AlreadyStunned \
-			and not effect.condition is AdventurerRules.OwnRegion and not family_contact and not two_bash_choices and not _nonwounding_hit(effect):
+			and not effect.condition is AdventurerRules.OwnRegion and not family_contact and not two_bash_choices \
+			and not _nonwounding_hit(effect) and not _required_target_guard(effect.condition, effect.consequence):
 		result = "if %s: %s" % [_condition(effect.condition, "this unit", unit), result]
 	var is_compact := effect.consequence is Effect.Phrase and not compact_action(effect.consequence, unit).is_empty()
 	if effect.cost != null and (effect.event != null or not _default_activity_cost(effect.cost) or effect.is_action_free() or not is_compact):
@@ -151,8 +150,32 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		result = payment + ": " + result if effect.event == null else result + "; " + payment
 	elif effect.event == null and effect.cost == null and not effect.is_action_free():
 		result = "[lb]A[rb]: " + result
+	if _uses_paid_sacrifice_life(effect): result += ", X is the target's current life"
 	if not effect.once_per_turn_key.is_empty(): result += " (once per turn)"
 	return result
+
+## Suppresses only guards that check the same mandatory target selectors already named by the consequence.
+static func _required_target_guard(guard: Condition, consequence: RefCounted) -> bool:
+	if guard is Condition.All:
+		return not guard.conditions.is_empty() and guard.conditions.all(
+			func(part: Condition) -> bool: return _required_target_guard(part, consequence))
+	if not guard is Condition.Matches or guard.mode != Condition.Matches.Mode.ANY: return false
+	var phrases: Array = consequence.phrases if consequence is Effect.ConsequenceSequence else [consequence]
+	for phrase in phrases:
+		if phrase is Effect.ConsequencePhrase and not phrase.optional and phrase.target == guard.selector: return true
+	return false
+
+## Names the source of X when a counter consequence reads the paid amount of a Sacrifice in its bundle.
+static func _uses_paid_sacrifice_life(effect: Effect) -> bool:
+	if not effect.cost is Effect.CostBundle or not effect.consequence is Effect.ConsequencePhrase: return false
+	var verb: Effect.Verb = effect.consequence.verb
+	if verb == null or verb.name != &"add_counter" or verb.user_params.size() < 2: return false
+	var amount: Variant = verb.user_params[1]
+	if not amount is RuleNumber or amount.basis != RuleNumber.SourceKind.PAID_AMOUNT: return false
+	for index in effect.cost.phrases.size():
+		if amount.result_name == StringName("cost_%d" % index):
+			return effect.cost.phrases[index].verb.name == &"sacrifice"
+	return false
 
 ## Red Mage/Pyromancer use an explicit captured wounded=false guard; presentation joins it to Hit without exposing history field names.
 static func _nonwounding_hit(effect: Effect) -> bool:
@@ -262,8 +285,9 @@ static func _compact_radius(query: Selector, action: StringName) -> int:
 ## Two automatic Shield/Mshield grants to the same identity share one target clause joined by 'and'.
 ## Choose-recipient/choose-ability Upgrade sequences print damage/range, the PixelLab upgrade arrow and radius while preserving choice steps.
 ## Courier's counter choice and Shaman's two Bash choices describe their complete operation once, while executions retain separate identities.
+## A standalone counter consequence can omit its recipient when both actor and counter host are SELF.
 static func _steps(definition: RefCounted, unit: UnitInfo, compact: bool = false) -> String:
-	if definition is Effect.Phrase: return _phrase(definition, unit, compact)
+	if definition is Effect.Phrase: return _phrase(definition, unit, compact, definition is Effect.ConsequencePhrase)
 	if definition is Effect.ConsequenceSequence and definition.phrases.size() == 2:
 		var first: Effect.ConsequencePhrase = definition.phrases[0]
 		var second: Effect.ConsequencePhrase = definition.phrases[1]
@@ -322,7 +346,8 @@ static func _paired_modifiers(first: Effect.ConsequencePhrase, second: Effect.Co
 ## Reset, Copy and one-shot next-turn action grants retain their distinct card keywords rather than hiding their semantics in generic counter text.
 ## Trigger references print it/target, SELF prints itself, and Flee delegates movement details to its glossary; historical Bomb targets remain explicit.
 ## Formats authored verbs, including execution-bound counter kinds and Shaman's distinct participant choices, without resolving them.
-static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false) -> String:
+## _steps enables implicit SELF wording only for a standalone counter consequence, so payments and other recipients remain explicit.
+static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false, implicit_counter_self: bool = false) -> String:
 	if phrase == null or phrase.verb == null: return "Incomplete phrase"
 	if compact:
 		var short_text := compact_action(phrase, unit)
@@ -345,14 +370,16 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 	var markers := _qualifiers(phrase)
 	match name:
 		&"add_counter":
-			if params[0] is RuleBinding: action = "+1 of the paid counter kind to itself"
-			elif params[0] == UnitInfo.STUN_COUNTER: action = "+%d %s to %s" % [int(params[1]), _action(&"stun", unit), target]
-			elif params[0] == UnitInfo.TEMP_MAGICAL_COUNTER: action = "%d %s to %s" % [int(params[1]), _action(&"mshield", unit), target]
+			var recipient := "" if implicit_counter_self and target == "itself" else " to " + target
+			if params[0] is RuleBinding: action = "+1 of the paid counter kind" + recipient
+			elif params[0] == UnitInfo.STUN_COUNTER: action = "+%d %s" % [int(params[1]), _action(&"stun", unit)] + recipient
+			elif params[0] == UnitInfo.TEMP_MAGICAL_COUNTER: action = "%d %s" % [int(params[1]), _action(&"mshield", unit)] + recipient
 			else:
 				var amount := _signed_parameter(params[1])
-				action = "%s %s to %s" % [amount, _plain(params[0]), target]
-				if params[0] == UnitInfo.EMBER_COUNTER and params[1] is RuleNumber:
-					action += ", where X is the sacrificed friend's current life"
+				var counter := _plain(params[0])
+				if params[0] == UnitInfo.EMBER_COUNTER and (params[1] is RuleNumber or absi(int(params[1])) != 1):
+					counter += "s"
+				action = "%s %s" % [amount, counter] + recipient
 		&"choose_bashing": action = "choose a bashing unit"
 		&"return_two_bashing": action = "choose a different bashing unit; return both chosen units"
 		&"spend_deployment": action = "−1 deploy"
@@ -394,16 +421,17 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 				var property := phrase.target as Selectors.PropertyOf
 				var host := "itself" if _is_self(property.input) and _is_self(phrase.subject) else _selector(property.input, unit)
 				if not _singular(property.input): host = ("all " if phrase.target_mode == Effect.Phrase.TargetMode.ALL else "any of ") + host
-				action = "%+d %s to %s" % [delta, _property(property.key), host]
+				var recipient := "" if implicit_counter_self and host == "itself" else " to " + host
+				action = "%+d %s" % [delta, _property(property.key)] + recipient
 				if property.key == &"Soul" and host == "itself": action = "%+d soul" % delta
 				if property.key in [UnitInfo.PHYSICAL_COUNTER, UnitInfo.TEMP_PHYSICAL_COUNTER]:
-					action = "%+d to %s" % [delta, host]
+					action = "%+d" % delta + recipient
 				elif property.key in [UnitInfo.MAGICAL_COUNTER, UnitInfo.TEMP_MAGICAL_COUNTER]:
-					action = "[color=#c084fc]%+d[/color] to %s" % [delta, host]
+					action = "[color=#c084fc]%+d[/color]" % delta + recipient
 				elif property.key in [UnitInfo.BOW_DAMAGE_COUNTER, UnitInfo.BOW_RANGE_COUNTER]:
 					var upgrade: Array[int] = [0, 0]
 					upgrade[0 if property.key == UnitInfo.BOW_DAMAGE_COUNTER else 1] = delta
-					action = _action_grant(&"bow", upgrade) + " to " + host
+					action = _action_grant(&"bow", upgrade) + recipient
 				if property.key in [UnitInfo.TEMP_PHYSICAL_COUNTER, UnitInfo.TEMP_MAGICAL_COUNTER]: action = "temporary " + action
 		&"set_flag": action = "set %s %s" % [target, "on" if not params.is_empty() and bool(params[0]) else "off"]
 		&"upgrade_bow": action = "%s to %s" % [_action_grant(&"bow", params), target]
@@ -416,7 +444,7 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 			if params.size() >= 2: action = "%s to %s" % [life_change(int(params[0]), int(params[1]), unit.player if unit != null else 1), target]
 		&"move":
 			if params[0] is RuleNumber: action = "Walk " + params[0].symbol
-			elif phrase.target is FrontierCatalogue.RetreatHexes: action = "Walk 1 away from the attacker"
+			elif phrase.target is FrontierCatalogue.RetreatHexes: action = "Walk 1 away from it"
 			else: action = markers + action + " to " + target
 		_:
 			if name in [&"fire", &"bow", &"cannon", &"bomb_throw", &"gore", &"mend", &"stun", &"shield", &"mshield", &"damage"] and not values.is_empty():
@@ -520,12 +548,14 @@ static func _selector(query: Selector, unit: UnitInfo, family: StringName = &"")
 ## _selector(), _phrase(), and _event() preserve all filters and source-owner colors even with no current candidates.
 ## Hero support queries explicitly retain both the other-than-SELF restriction and the troop-only filter.
 static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false) -> String:
-	if query is FrontierCatalogue.OtherFriends: return "another deployed friend" if singular else "other deployed friends"
-	if query is FrontierCatalogue.ProjectileUnits: return "a unit with Projectiles" if singular else "units with Projectiles"
-	if query is FrontierCatalogue.BashFriends: return "a friend in Bash" if singular else "friends in Bash"
+	if query is FrontierCatalogue.OtherFriends or query is SynergyCatalogue.OtherFriends:
+		return "another friend" if singular else "other friends"
+	if query is FrontierCatalogue.ProjectileUnits:
+		if query.relative_owner == Enum.YOU: return "friend with Projectiles" if singular else "friends with Projectiles"
+		return "unit with Projectiles" if singular else "units with Projectiles"
+	if query is FrontierCatalogue.BashFriends: return "friend in a Bash" if singular else "friends in Bash"
 	if query is HeroCatalogue.OtherFriends:
 		return "friendly troop" if query.type == Enum.type.TROOP else "friend"
-	if query is SynergyCatalogue.OtherFriends: return "another friendly deployed unit"
 	var noun := "unit" if singular else "units"
 	if query.kind == TargetRef.Kind.HEX: noun = "hex" if singular else "hexes"
 	elif query.kind == TargetRef.Kind.PLAYER: noun = "player" if singular else "players"
@@ -534,7 +564,7 @@ static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false)
 		if not singular: noun = "heroes" if query.type == Enum.type.HERO else noun + "s"
 	if not query.name_contains.is_empty(): noun = query.name_contains.capitalize() + " " + noun
 	if not query.required_flag.is_empty(): noun = String(query.required_flag) + " " + noun
-	if query.state >= 0 and not (query.state == Enum.t_state.DEPLOYED and query.relative_owner == Enum.YOU):
+	if query.state >= 0 and not (query.state == Enum.t_state.DEPLOYED and query.relative_owner in [Enum.YOU, Enum.OPP]):
 		noun = "%s %s" % [_enum_word(Enum.t_state, query.state), noun]
 	if query.relative_owner != Enum.ANY:
 		var friendly := query.relative_owner == Enum.YOU
@@ -565,7 +595,7 @@ static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false)
 ## Trigger action anchors use the same owner-aware PixelLab icons as their consequence descriptions.
 ## Death anchors use the shared skull image, matching the Die vocabulary in other rule descriptions.
 ## SELF action occurrences with an unrestricted target omit 'to any hex'; only constrained targets remain explicit.
-## Hit/Wound describe contact; Hunter's declarations name the loaded attacker and the observed attack families.
+## Hit/Wound describe contact, attack declarations use “attacks,” and fixed life changes use signed heart notation.
 static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 	var actor := _selector(event.subject, unit)
 	var target := _selector(event.target, unit)
@@ -573,8 +603,10 @@ static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 	if event.target is QuerySelector: target = _query(event.target, unit, true)
 	var name := event.observed_action if not event.observed_action.is_empty() else (event.verb.name if event.verb != null else &"")
 	var text := ""
-	if event.subject is FrontierCatalogue.ProjectileUnits and event.stage == &"target":
-		return actor + (" declares Bash" if name == &"bash" else " declares Bow, Fire, Cannon or Gore")
+	if event.observes_attack_declaration: return actor + " attacks"
+	if name == &"life_increase" and event.detail_constraints.has("actual") and event.detail_constraints.has("maximum"):
+		return "%s on %s" % [life_change(int(event.detail_constraints.actual), int(event.detail_constraints.maximum),
+			unit.player if unit != null else 1), actor]
 	if name in [&"hit", &"wound"] and event.target is QuerySelector and event.target.relative_owner == Enum.ANY \
 			and event.target.owner == Enum.owner.ANY and event.target.type == Enum.type.ANY and event.target.state < 0 \
 			and event.target.region == Enum.region.ANY and event.target.side == Enum.side.ANY and event.target.control == Enum.control.ANY \

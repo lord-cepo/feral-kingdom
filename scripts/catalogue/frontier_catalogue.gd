@@ -53,7 +53,7 @@ static func flying_squirrel_thief(owner: int) -> UnitInfo:
 	unit.trigger_effects.append(Effect.on_event(gain, sequence))
 	return unit
 
-## Loaded adjacent units on either side gain live Bow values; declarations by loaded attackers offer a free retreat.
+## Other loaded friends trigger retreat on attack declarations; the adjacent Bow aura still applies to either owner.
 static func rat_hunter(owner: int) -> UnitInfo:
 	var unit := SynergyCatalogue.card(owner, "rat-hunter", "Rat Hunter", 3, [Enum.region.FRONT])
 	var loaded := ProjectileUnits.new()
@@ -61,12 +61,10 @@ static func rat_hunter(owner: int) -> UnitInfo:
 	unit.continuous_effects.append(ContinuousEffect.have(adjacent, [Contribution.bow_values(1, 1)],
 		null, null, "Adjacent units with Projectiles have +1 Bow damage and +1 Bow range"))
 	var retreat := SynergyRules.phrase(Verbs.movement(1, false, true), RetreatHexes.new())
-	var declaration := Effect.EventPhrase.observe_any([&"bow", &"fire", &"cannon", &"gore"], loaded,
-		QuerySelector.new(TargetRef.Kind.HEX), TargetRef.Kind.UNIT, TargetRef.Kind.HEX, &"target")
+	var friendly_loaded := ProjectileUnits.new()
+	friendly_loaded.relative_owner = Enum.YOU
+	var declaration := Effect.EventPhrase.observe_attack_declaration(friendly_loaded)
 	unit.trigger_effects.append(Effect.on_event(declaration, retreat))
-	var bash := Effect.EventPhrase.observe(&"bash", loaded, QuerySelector.new(),
-		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, &"target")
-	unit.trigger_effects.append(Effect.on_event(bash, retreat))
 	return unit
 
 ## Own Bash declarations award Soul; positive X pays only Soul for Walk X followed by +X/+X through opposing End.
@@ -129,18 +127,15 @@ static func marmot_crossbowman(owner: int) -> UnitInfo:
 		SynergyRules.phrase(Verbs.upgrade_bow(1, 0), Selectors.Self.new(), true)))
 	return unit
 
-## Opponent-side Intermediate Paladin pays self-Stun only for Bow or the paired Shield command.
+## Opponent-side Intermediate Paladin pays self-Stun for Bow or bundles it with enemy-hero Shield to protect a friend in Bash.
 static func red_squirrel_paladin(owner: int) -> UnitInfo:
 	var unit := SynergyCatalogue.card(owner, "red-squirrel-paladin", "Red Squirrel Paladin", 3, [Enum.region.INTERMEDIATE])
 	unit.deployment_enemy_side = true
 	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.bow(2, 2), Selectors.BowTargets.new(2)), 1, false))
 	var friendly := SynergyRules.phrase(Verbs.shield(2), BashFriends.new())
-	var hostile := SynergyRules.phrase(Verbs.shield(2, true), enemy_heroes(), true)
-	friendly.action_free = true
-	hostile.action_free = true
-	var protection := Effect.new(Effect.CostPhrase.new(Selectors.Self.new(), Verbs.pay_activity(true, 1),
-		Selectors.Self.new()), null, Effect.ConsequenceSequence.new([friendly, hostile]))
-	protection.condition = Condition.All.new([Condition.Matches.new(friendly.target), Condition.Matches.new(hostile.target)])
+	var payment := Effect.CostPhrase.new(Selectors.Self.new(), Verbs.shield(2, true), enemy_heroes())
+	var protection := SynergyRules.command(friendly, 1, false, payment)
+	protection.condition = Condition.Matches.new(friendly.target)
 	unit.effects.append(protection)
 	return unit
 

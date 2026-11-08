@@ -219,9 +219,11 @@ static func pull_bomb(distance: int, range: int, action_free: bool = false) -> E
 	return Effect.Verb.new(&"pull_bomb", Action.displace_bomb, Action.can_displace_bomb,
 		TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [distance, range, true, action_free])
 
-## Standard Shield protects friends; Paladin supplies an explicit enemy-hero exception for its second phrase.
+## Standard Shield protects friends. The enemy-hero variant may also be an explicit atomic cost.
 static func shield(amount: int, enemy_hero: bool = false) -> Effect.Verb:
-	return Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false, enemy_hero])
+	var result := Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false, enemy_hero])
+	result.atomic_cost = enemy_hero
+	return result
 
 static func mshield(amount: int) -> Effect.Verb:
 	return Effect.Verb.new(&"mshield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, true])

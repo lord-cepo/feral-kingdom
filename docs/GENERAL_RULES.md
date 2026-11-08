@@ -150,6 +150,7 @@ not separately for each recipient unless the card explicitly says so.
 | Event / timing | Meaning |
 | --- | --- |
 | Declaration / Target | Commit a legal action to its participants/locations; a delayed attack becomes pending. |
+| Attacks | In declaration-trigger wording, the subject starts a Bash or uses Bow, Fire or Cannon. |
 | Resolved | Reach the action's resolution boundary. Queueing a delayed attack is not resolution. |
 | Hit | Actual attack contact, physical or magical, including zero resulting damage. Cannon and Fire participate; immunity and misses prevent Hit. Bomb blasts remain outside attack families and publish bomb_hit instead. |
 | Wound | Positive actual life loss from attack contact, physical or magical. Nonlethal Fire creates Hit without Wound; lethal Fire creates both. Life payments, Reset and ordinary life changes do not invent attack contact. |

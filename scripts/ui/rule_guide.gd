@@ -36,6 +36,7 @@ const ENTRIES := {
 	"control": "Control counters add to a unit's regional strength, separately from physical protection.",
 	"hit": "Hit: actual physical or magical attack contact, including zero damage; misses and immunity do not count.",
 	"wound": "Wound: positive life loss from attack contact. Nonlethal Fire creates Hit without Wound.",
+	"attacks": "Attacks: starts a Bash or uses Bow, Fire or Cannon. The trigger watches the declaration.",
 	"die": "Death: the unit is defeated. Its death triggers are captured before it leaves the board.",
 	"bash": "Bash: opposing units share a hex. The unit that entered is the attacker; the other is the defender.",
 	"move": "Walk: move up to the shown number of hexes along a legal route.",
@@ -53,12 +54,12 @@ const ENTRIES := {
 }
 
 ## Controller hover labels call this once on creation; BBCode tags/asset paths stay intact and existing links are never nested.
-## Keyword links use explicit underlines independently of link styling; icon entries share GameIcons' asset vocabulary.
+## Keyword links include attack declarations and use explicit underlines; icon entries share GameIcons' asset vocabulary.
 ## Sticker letters immediately preceding an icon are captured in its guide metadata, keeping each attack's explanation local to that occurrence.
 ## Bracketed A/S cost markers link independently; ordinary English articles are not mistaken for action costs.
 static func decorate(text: String) -> String:
 	var regex := RegEx.new()
-	regex.compile("\\[img[^\\]]*\\][^\\[]+\\[/img\\]|\\[[^\\]]*\\]|(?<=\\[lb\\])(?i:A2S|2S|AS|A|S)(?=\\[rb\\])|\\b(?i:upgrade|disable|reset|sacrific(?:e|ed)|embers?|projectiles?|control|hits?|wounds?|deploys?|revive|flees?|returns?|friends?|friendly|wild|itself|it|target|End|AC|C)\\b|⚔️")
+	regex.compile("\\[img[^\\]]*\\][^\\[]+\\[/img\\]|\\[[^\\]]*\\]|(?<=\\[lb\\])(?i:A2S|2S|AS|A|S)(?=\\[rb\\])|\\b(?i:upgrade|disable|reset|sacrific(?:e|ed)|embers?|projectiles?|control|attacks|hits?|wounds?|deploys?|revive|flees?|returns?|friends?|friendly|wild|itself|it|target|End|AC|C)\\b|⚔️")
 	var result := ""
 	var offset := 0
 	var link_depth := 0

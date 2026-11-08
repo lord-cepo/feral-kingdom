@@ -57,15 +57,15 @@ class CostBundle extends RefCounted:
 	## Copies reusable payment definitions; no chosen targets live on the bundle.
 	func _init(steps: Array[CostPhrase]) -> void:
 		phrases = steps.duplicate()
-	## Rejects unsupported costs before selection; Return, Disable and deployments are accepted because CostPayment preflights their ledgers/departures.
+	## Rejects unsupported costs before selection; CostPayment preflights departures, deployments and explicit Shield payments.
 	func validate() -> String:
 		if phrases.is_empty(): return "A cost bundle must contain a payment."
 		for phrase in phrases:
 			if phrase == null: return "A cost bundle contains an empty payment."
 			var error := phrase.validate()
 			if not error.is_empty(): return error
-			if phrase.optional or phrase.verb.name not in [&"self_stun", &"decrement", &"deactivate", &"pay_life", &"next_turn_actions", &"choose_counter_unit", &"sacrifice", &"disable", &"return_to_hand", &"spend_deployment"]:
-				return "Cost bundles support only mandatory preflighted activity, counter, life, departure, deployment and next-turn-action payments."
+			if phrase.optional or phrase.verb.name not in [&"self_stun", &"decrement", &"deactivate", &"pay_life", &"next_turn_actions", &"choose_counter_unit", &"sacrifice", &"disable", &"return_to_hand", &"spend_deployment", &"shield"]:
+				return "Cost bundles support only mandatory preflighted payments."
 		return ""
 
 class Verb extends RefCounted:
@@ -229,6 +229,8 @@ class EventPhrase extends Phrase:
 	var observed_actions: Array[StringName] = []
 	var matches_any_action := false
 	var observes_family := false
+	## Attack declarations bind their recipient by action because Bash targets a unit and the ranged actions target hexes.
+	var observes_attack_declaration := false
 	var detail_constraints: Dictionary = {}
 	## Explicit cancellation observers (such as Flee) opt in; ordinary attack triggers still require successful occurrences.
 	var observes_cancelled := false
@@ -239,6 +241,7 @@ class EventPhrase extends Phrase:
 		&"patk": [&"gore", &"bash", &"bow"],
 		&"ratk": [&"fire", &"cannon"],
 	}
+	const ATTACK_DECLARATIONS: Array[StringName] = [&"bash", &"bow", &"fire", &"cannon"]
 
 	## Creates a pattern for one exact event action without inventing an executable Verb.
 	## Card factories pass selectors for the captured subject/target and may constrain
@@ -282,6 +285,14 @@ class EventPhrase extends Phrase:
 		result.observes_family = true
 		return result
 
+	## Watches a qualifying actor start Bash or declare Bow, Fire or Cannon without filtering the recipient.
+	static func observe_attack_declaration(actors: Selector) -> EventPhrase:
+		var recipient := Selectors.Reference.new(Selectors.Anchor.EVENT_TARGET)
+		var result := observe_any(ATTACK_DECLARATIONS, actors, recipient,
+			TargetRef.Kind.UNIT, TargetRef.Kind.HEX, &"target")
+		result.observes_attack_declaration = true
+		return result
+
 	## Validates the action filter, stage, selectors, domains, and detail constraints.
 	## EffectExecution.start() runs this before paying costs or applying consequences.
 	func validate(ctx: RuleContext = null) -> String:
@@ -297,12 +308,13 @@ class EventPhrase extends Phrase:
 			if action_name.is_empty(): return "Event pattern action names cannot be empty."
 		if not observed_action.is_empty() and observed_action not in ACTION_FAMILIES and observed_action not in observed_actions:
 			return "Event pattern action name cannot be empty."
-		for pair in [[subject, observed_subject_kind], [target, observed_target_kind]]:
+		var target_kind := Selector.CONTEXTUAL if observes_attack_declaration else int(observed_target_kind)
+		for pair in [[subject, observed_subject_kind], [target, target_kind]]:
 			var selector: Selector = pair[0]
 			var error := selector.validate(ctx)
 			if not error.is_empty(): return error
 			var native_kind := selector.output_kind(ctx)
-			if native_kind >= 0 and not TargetResolver.compatible(native_kind, pair[1]):
+			if native_kind >= 0 and pair[1] >= 0 and not TargetResolver.compatible(native_kind, pair[1]):
 				return "Event pattern kind mismatch: use an explicit projection."
 		return ""
 
@@ -314,6 +326,8 @@ class EventPhrase extends Phrase:
 		var subject_kind := observed_subject_kind if observed_pattern else verb.subject_kind
 		var target_kind := observed_target_kind if observed_pattern else verb.target_kind
 		if trigger == null or trigger.stage != stage: return false
+		if observes_attack_declaration:
+			target_kind = TargetRef.Kind.UNIT if trigger.action == &"bash" else TargetRef.Kind.HEX
 		if not trigger.succeeded() and not (observes_cancelled and bool(trigger.data.get("cancelled", false))): return false
 		if not matches_any_action:
 			var accepted := observed_actions

@@ -16,6 +16,7 @@ func _ready() -> void:
 	test_paladin()
 	test_pirate()
 	test_printed_commands()
+	test_concise_rule_text()
 	print("Frontier units: %d checks, %d failures" % [checks, failures])
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -120,24 +121,37 @@ func test_thief() -> void:
 	check(not choose(TargetRef.unit(enemy.iun)) and choose(TargetRef.unit(ally.iun)), "The followup Revive is friendly only")
 	check(ally.t_state == Enum.t_state.UNDEPLOYED and thief.effects[0].consequence.verb.name == &"fly", "Thief Revives to hand and retains Fly")
 
-## A loaded unit's live Bow aura ends without ammo or adjacency; its declaration alone offers one step farther away.
+## The Bow aura is neutral, but only a loaded friend declaring Bash, Bow, Fire or Cannon offers a retreat.
 func test_hunter() -> void:
 	fixture()
 	var hunter := add(FrontierCatalogue.rat_hunter(1), 2)
-	var attacker := plain(2, 3)
+	var attacker := plain(1, 3)
 	var empty := plain(1, 4)
+	var enemy := plain(2, 5)
 	var ref := TargetRef.unit(attacker.iun)
 	check(attacker.effective_bow_bonus() == Vector2i.ZERO, "Empty ammunition does not qualify")
 	SynergyActions.add_counter(ref, ref, UnitInfo.PROJECTILE_COUNTER, 1)
-	check(attacker.effective_bow_bonus() == Vector2i.ONE, "An adjacent loaded enemy gets the same aura as a friend")
+	var hostile := TargetRef.unit(enemy.iun)
+	SynergyActions.add_counter(hostile, hostile, UnitInfo.PROJECTILE_COUNTER, 1)
+	enemy.ihx = 3
+	check(attacker.effective_bow_bonus() == Vector2i.ONE and enemy.effective_bow_bonus() == Vector2i.ONE,
+		"Loaded adjacent units of either owner get the Bow aura")
+	declaration(&"bow", enemy, TargetRef.hex(2))
+	enemy.ihx = 5
 	Match.action_event.emit(EffectEvent.new(&"bow", ref, TargetRef.hex(2)))
 	declaration(&"bow", empty, TargetRef.hex(2))
-	check(not Match.rules_runner.busy(), "Resolution and unloaded declarations offer no retreat")
+	declaration(&"gore", attacker, TargetRef.hex(2))
+	check(not Match.rules_runner.busy(), "Enemy, unloaded, resolved and Gore events offer no retreat")
 	var tokens := Match.players[1].actions_remaining
 	declaration(&"bow", attacker, TargetRef.hex(2))
 	check(not choose(TargetRef.hex(0)) and choose(TargetRef.hex(1)), "Retreat is exactly one step farther from the attacker")
 	check(hunter.ihx == 1 and hunter.active and Match.players[1].actions_remaining == tokens, "Retreat pays neither activity nor an action")
 	check(attacker.effective_bow_bonus() == Vector2i.ZERO, "The adjacency bonus disappears after retreat")
+	for action in [&"bash", &"fire", &"cannon"]:
+		hunter.ihx = 2
+		var target := hostile if action == &"bash" else TargetRef.hex(5)
+		declaration(action, attacker, target)
+		check(choose(TargetRef.hex(1)), "%s uses the attacking friend as the retreat anchor" % action)
 
 ## Own Bash declarations grant Soul; bounded X survives payment and modifiers expire only at opposing End.
 func test_berserker() -> void:
@@ -223,7 +237,7 @@ func test_crossbowman() -> void:
 	contact(&"hit", crossbowman, enemy, &"bow", 0)
 	check(crossbowman.bow_damage_bonus == 1 and crossbowman.bow_range_bonus == 0, "Own contact adds damage even when blocked by modifiers")
 
-## The Paladin's pair selects a friend in Bash and the deployed enemy hero, paying only one self-Stun.
+## Paladin pays self-Stun and enemy-hero Shield atomically before a selected friendly Bash participant receives Shield.
 func test_paladin() -> void:
 	fixture()
 	var paladin := add(FrontierCatalogue.red_squirrel_paladin(1), 0)
@@ -240,8 +254,12 @@ func test_paladin() -> void:
 	Match.bashes.append(bash)
 	var tokens := Match.players[1].actions_remaining
 	check(paladin.deployment_enemy_side and paladin.effects[0].is_action_free(), "Paladin deploys on the enemy side and Bow costs no action")
-	check(play(paladin, 1) and choose(TargetRef.unit(paladin.iun)), "Paladin pays one self-Stun")
-	check(not choose(TargetRef.unit(bystander.iun)) and not choose(TargetRef.unit(enemy.iun)), "Nonparticipant friend and Bash enemy cannot take the first Shield")
+	check(play(paladin, 1) and choose(TargetRef.unit(paladin.iun)), "Paladin selects one self-Stun as part of the payment")
+	check(paladin.active and not choose(TargetRef.unit(enemy.iun)), "Ordinary opponents cannot pay the enemy-hero Shield cost")
+	check(choose(TargetRef.unit(hero.iun)), "Only the deployed enemy hero can take the payment Shield")
+	check(not paladin.active and hero._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 2 \
+		and ally._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 0, "Enemy hero is shielded before the friendly consequence")
+	check(not choose(TargetRef.unit(bystander.iun)) and not choose(TargetRef.unit(enemy.iun)), "Nonparticipant friend and Bash enemy cannot take the consequence")
 	check(choose(TargetRef.unit(ally.iun)), "A friendly Bash participant receives Shield")
 	check(ally._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 2 and hero._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 2, "Only the selected friend and opposing hero gain Shield")
 	check(not paladin.active and paladin._counter_value(UnitInfo.STUN_COUNTER) == 1 and Match.players[1].actions_remaining == tokens, "One Stun and no player action pay the pair")
@@ -291,3 +309,24 @@ func test_printed_commands() -> void:
 			&"fire": check(Match.pending_attacks.size() == 1, "%s queues Fire" % unit.name)
 			&"cannon": check(Match.pending_cannon_attacks.size() == reach, "%s queues the selected Cannon line" % unit.name)
 			&"bow": check(Match.pending_bow_attacks.size() == 1, "%s queues Bow" % unit.name)
+
+## Card wording omits implicit legality checks while preserving payment, the affected recipient and amount provenance.
+func test_concise_rule_text() -> void:
+	var engineer := FrontierCatalogue.beaver_engineer(1)
+	var paladin := FrontierCatalogue.red_squirrel_paladin(1)
+	var alchemist := FrontierCatalogue.mole_alchemist(1)
+	var wizard := FrontierCatalogue.lemming_wizard(1)
+	var thief := FrontierCatalogue.flying_squirrel_thief(1)
+	var hunter := FrontierCatalogue.rat_hunter(1)
+	check(not EffectText.describe_effect(engineer.effects[1], engineer).contains("if "), "Engineer target existence is implicit")
+	var shield := EffectText.describe_effect(paladin.effects[1], paladin)
+	check(shield.contains("[lb]S[rb]") and not shield.contains("if ") and shield.find("enemy hero") < shield.find("friend in a Bash"),
+		"Paladin shows its cost before the friendly Shield")
+	var sacrifice := EffectText.describe_effect(alchemist.effects[1], alchemist)
+	check(sacrifice.contains("sacrifice another friend") and sacrifice.contains("+X Embers") and sacrifice.contains("current life"),
+		"Alchemist names the paid target's life without an implicit deployment clause")
+	check(not EffectText.describe_effect(wizard.trigger_effects[0], wizard).contains("deployed"), "Wizard implies deployed friends")
+	check(EffectText.describe_effect(thief.trigger_effects[0], thief).contains(EffectText.life_change(1, 1)),
+		"Thief uses compact heart notation")
+	check(EffectText.describe_effect(hunter.trigger_effects[0], hunter).begins_with("friend with Projectiles attacks: Walk 1 away from it"),
+		"Hunter's retreat names the attacking friend once")

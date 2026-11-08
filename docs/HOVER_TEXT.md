@@ -54,7 +54,7 @@ formatter. Physical-threshold auras read `friends with +3 or more physical have
 ...`; inert-bomb support reads `friends over bombs have +0/+1`. The bomb wording
 still requires an inert bomb. Wild Marmot's Return is confirmed [AS], not free.
 Attack-family guards fold into the contact clause: `friend wounds with [Bow]:
-+1 Soul to itself`, retaining the Bow requirement without a separate technical
++1 Soul`, retaining the Bow requirement without a separate technical
 `if the contact was caused by Bow` sentence.
 
 Grey Squirrel Warrior earns one Soul for each friendly Bow Wound (positive life
@@ -67,6 +67,8 @@ The user's 2026-11-05 spot corrections define shared presentation rules, not uni
 
 - A SELF action trigger with an unrestricted destination reads `this unit [action icon]: ...`, omitting redundant `to any hex`. Historical stages and genuinely constrained participants remain explicit.
 - Simple actions use amount/icon/range. Each family's normal ownership filter is implicit: Shield/Mshield/Mend choose friends; Stun/Push/Pull use the authored hostile shorthand. Other target restrictions remain in structural descriptions.
+- A standalone counter consequence on SELF reads `+1 Ember`. Counter changes to another recipient still name that recipient. Compound effects keep their target clauses.
+- Mandatory-target existence checks remain part of legality and are implicit in the card text. “Friend” implies deployed unless a different zone is written. Fixed life-increase triggers use the signed heart notation. An attack-declaration trigger uses “attacks” for starting Bash or using Bow, Fire or Cannon.
 - Default [AS] is implicit for compact actions. Written consequences show `[AS]: ...`; independent [S]/[A]/[2S] and resource costs retain their actual markers. A Disable-to-deployment conversion reads `[AS] disable friend: +1 deploy`, without changing its sequential paid behavior. Disable's normal in-hand non-hero restriction remains authoritative in its verb and glossary.
 - Modifier auras read `adjacent friends with one or more projectiles have +1/+0`. Source conditions read `while this unit is wounded: +0/+1 to adjacent friends`. Friends means every friendly unit type; an explicit troop filter is a separate condition. Adjacency excludes distance zero.
 - Jerboa King reads `friend is shifted: it has +2/+0 until enemy End`. Shifted is successful forced displacement, currently Push/Pull; ordinary Walk/Fly do not qualify. A nearby Sacrifice condition is folded into the event once: `friend is sacrificed within 2: ...`. Two automatic same-recipient Shield/Mshield grants share `and ... to this unit` while remaining ordered rule actions.
