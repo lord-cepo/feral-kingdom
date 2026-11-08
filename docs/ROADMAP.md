@@ -420,3 +420,11 @@ Snapshot support retains spending and displacement history. Native art imports,
 usage/ruling documents and focused per-effect regressions accompany the roster.
 General future-phase scheduling and unrelated roadmap stages remain deferred.
 See [SYNERGY_UNITS.md](SYNERGY_UNITS.md) for current interfaces and caller maps.
+
+### Frontier roster slice (2026-11-07)
+
+The eleven approved [frontier cards](FRONTIER_UNITS.md) append after the
+previous catalogue IDs. This slice adds a persisted once-per-turn trigger
+ledger, captured Sacrifice life, enemy-control deployment permission and
+compulsory Bash destination selection for Walk. It reuses typed timed
+modifiers and the existing two-player trigger, payment and selection paths.

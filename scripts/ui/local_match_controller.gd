@@ -24,6 +24,8 @@ var phase_sign: Control
 var save_snapshot_button: Button
 var reset_match_button: Button
 var reset_requested := false
+## Shared by unit titles and detached counter text so inspection typography stays consistent.
+const HOVER_TITLE_FONT_SIZE := 17
 var hover_panel: PanelContainer
 var side_frame_style: StyleBoxTexture
 var hover_frame_style: StyleBoxTexture
@@ -40,6 +42,7 @@ var rule_guide_label: Label
 var rule_guide_key := ""
 var rule_guide_tween: Tween
 var phase_trigger_hovered := false
+var continuous_hover_text := ""
 var phase_hover_execution: EffectExecution
 var hover_over_target := false
 var hover_cutout_material: ShaderMaterial
@@ -168,7 +171,7 @@ func _unhandled_input(event: InputEvent) -> void:
 ## start_match() calls this once; animated control handlers call _save_snapshot() and _reset_match().
 ## Turn/phase/action summaries stay in the player-info panels and inn sign; no top status or instruction text is shown.
 ## Adds the terrain-anchored inn sign left of the side cards; its signal bindings queue the four visible phase labels.
-## Player info stays visible; each unit roster begins collapsed behind its own bottom-corner arrow sign.
+## Player info stays visible; both unit rosters begin visible with independent bottom-corner arrow signs.
 func _build_hud() -> void:
 	var background_layer := CanvasLayer.new()
 	background_layer.layer = -1
@@ -265,13 +268,14 @@ func _animate_hud_button(button: Button) -> Tween:
 	button.set_meta("press_tween", tween)
 	return tween
 
-## _build_hud() adds a mirrored pair of bottom-corner arrow buttons; each controls only its own player's roster.
+## _build_hud() adds bottom-corner toggles with both rosters initially open; each button controls its own player.
 func _build_side_drawer_button(root: Control, player_id: int) -> void:
 	var button := preload("res://scripts/ui/side_roster_toggle.gd").new()
 	button.setup(player_id)
 	button.pressed.connect(_toggle_side_drawer.bind(player_id))
 	root.add_child(button)
-	side_drawers[player_id] = {"button": button, "open": false, "progress": 0.0, "tween": null}
+	side_drawers[player_id] = {"button": button, "open": true, "progress": 1.0, "tween": null}
+	button.set_open(true)
 
 ## Arrow clicks reverse that player's roster fade and smoothly reflect its sign; player info remains visible.
 ## Closing clears inspection hover, while deployment posture continues to follow its hex highlights.
@@ -386,7 +390,7 @@ func _on_card_unhovered(unit_id: int) -> void:
 
 ## Rebuilds compact card/stat/rule panels without a redundant 'Hex details' or 'Card details' heading.
 ## Hover signals and _refresh_hud() call this; Bash inspection follows one unit and drops stale/moved participants.
-## Bombs and pending attacks share a detached 25px counter box using value/P, action icon and source troop name.
+## Bombs and pending attacks share a detached counter box using the unit-title font size, value/P, action icon and source troop name.
 ## Empty target tiles retain this box; resolved attacks disappear on the next HUD refresh.
 ## Positive Stun counts for the inspected troops share that box; their health rows contain only life.
 ## Named unit resource counters such as Soul are displayed in the same detached counter box, separately from modifier/Bow counters.
@@ -400,6 +404,9 @@ func _on_card_unhovered(unit_id: int) -> void:
 ## The phase blink takes inspection priority and describes the captured execution even when its source has died.
 func _refresh_hover_panel() -> void:
 	if hover_panel == null or not is_instance_valid(hover_panel): return
+	if not continuous_hover_text.is_empty() and (hover_info_enabled or hover_ctrl_held):
+		_show_continuous_hover()
+		return
 	if phase_trigger_hovered and (hover_info_enabled or hover_ctrl_held):
 		_show_phase_trigger_hover()
 		return
@@ -462,7 +469,7 @@ func _refresh_hover_panel() -> void:
 		hover_content.add_child(counter_box)
 		var attacks_line := RichTextLabel.new()
 		attacks_line.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		attacks_line.add_theme_font_size_override("normal_font_size", 25)
+		attacks_line.add_theme_font_size_override("normal_font_size", HOVER_TITLE_FONT_SIZE)
 		attacks_line.bbcode_enabled = true
 		attacks_line.meta_underlined = false
 		attacks_line.fit_content = true
@@ -493,6 +500,10 @@ func _refresh_hover_panel() -> void:
 func _process(_delta: float) -> void:
 	_resume_online_switch()
 	if hover_panel == null or not is_instance_valid(board): return
+	var continuous_text: String = board.continuous_cues.hovered_text(get_viewport().get_mouse_position()) if board.continuous_cues != null else ""
+	if continuous_text != continuous_hover_text:
+		continuous_hover_text = continuous_text
+		_refresh_hover_panel()
 	var waiting: EffectExecution = Match.rules_runner.presentation_waiting
 	var on_blink: bool = phase_sign != null and phase_sign.contains_trigger_blink(get_viewport().get_mouse_position()) and waiting != null
 	if on_blink != phase_trigger_hovered or (on_blink and waiting != phase_hover_execution):
@@ -655,7 +666,7 @@ func _make_hover_unit_card(unit: UnitInfo) -> Control:
 	var title := Label.new()
 	title.text = unit.name
 	title.add_theme_color_override("font_color", Color("#f2f2ef"))
-	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_font_size_override("font_size", HOVER_TITLE_FONT_SIZE)
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	copy.add_child(title)
@@ -835,21 +846,24 @@ func _hover_frame_style() -> StyleBoxTexture:
 		hover_frame_style.set_content_margin(side, 24.0)
 	return hover_frame_style
 
-## Fits the hover host at the lower right until Ctrl-dragged; clamps display without overwriting the user's preferred position.
+## Fits inspection left of the right roster (above bottom trays on compact screens) until Ctrl-dragged; preserves custom placement.
 ## HUD refreshes, viewport resizing and deferred text layout can temporarily enlarge content; later layouts restore the preferred position.
 ## Default inspection sits half the 40px hand-pointer height higher; Ctrl-dragged placement remains under direct user control.
 func _layout_hover_panel() -> void:
 	if hover_panel == null or not is_instance_valid(hover_panel): return
 	var view_size := get_viewport().get_visible_rect().size
 	var margin := clampf(view_size.x * 0.014, 8.0, 22.0)
-	var width := minf(360.0, maxf(0.0, view_size.x - margin * 2.0))
+	var compact := view_size.x < 900.0
+	var roster_width := 0.0 if compact else clampf(view_size.x * 0.095, 96.0, 124.0) + margin
+	var width := minf(360.0, maxf(0.0, view_size.x - margin * 2.0 - roster_width))
 	hover_panel.size.x = width
 	var content_height := hover_content.get_combined_minimum_size().y + 4.0
 	var panel_height := minf(maxf(76.0, content_height), maxf(76.0, view_size.y - margin * 2.0))
 	if hover_custom_position:
 		hover_panel.position = Vector2(clampf(hover_preferred_position.x, 0.0, maxf(0.0, view_size.x - width)), clampf(hover_preferred_position.y, 0.0, maxf(0.0, view_size.y - panel_height)))
 	else:
-		hover_panel.position = Vector2(maxf(margin, view_size.x - width - margin), maxf(margin, view_size.y - panel_height - margin - 20.0))
+		var bottom := view_size.y * 0.65 if compact else view_size.y - 20.0
+		hover_panel.position = Vector2(maxf(margin, view_size.x - width - margin - roster_width), maxf(margin, bottom - panel_height - margin))
 	hover_panel.size = Vector2(width, panel_height)
 
 ## Match state/runner/cue signals schedule one repaint for an event burst; direct input handlers may still request an immediate HUD update.
@@ -1529,3 +1543,28 @@ func _resume_online_switch() -> void:
 		var next_action := pending_action_switch_index
 		pending_action_switch_index = -1
 		_begin_unit_action(selected_unit_id, next_action)
+
+## The phase-sign continuous circle uses the shared animated inspection host; exit or lost eligibility restores ordinary inspection.
+func _show_continuous_hover() -> void:
+	for child in hover_content.get_children():
+		hover_content.remove_child(child)
+		child.queue_free()
+	counter_pointer_inside = false
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _hover_frame_style())
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_content.add_child(frame)
+	var text := RichTextLabel.new()
+	text.bbcode_enabled = true
+	text.fit_content = true
+	text.scroll_active = false
+	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_font_size_override("normal_font_size", 21)
+	text.add_theme_color_override("default_color", Color.WHITE)
+	text.text = RuleGuide.decorate(continuous_hover_text)
+	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(text)
+	_set_hover_visible(true)
+	_sync_hover_target_input(hover_panel)
+	_layout_hover_panel()

@@ -56,7 +56,7 @@ func _ready() -> void:
 	body.add_child(navigation)
 	navigation.alignment = BoxContainer.ALIGNMENT_CENTER
 	navigation.add_theme_constant_override("separation", 20)
-	for caption in ["Host", "Find", "Build"]:
+	for caption in ["Local game", "Host", "Find", "Build"]:
 		var button := Button.new()
 		button.text = caption
 		button.custom_minimum_size = Vector2(170, 56)
@@ -68,9 +68,12 @@ func _ready() -> void:
 	_build_info_panel()
 	_build_welcome()
 
-## Navigation buttons clear the inspector and reveal the animated builder or persistent relay lobby.
+## Navigation buttons start offline hot-seat play or reveal the animated builder/persistent relay lobby.
 ## First Build entry constructs the catalogue/editor once; subsequent visits retain choices without reloading portraits.
 func _navigate(destination: String) -> void:
+	if destination == "Local game":
+		_start_local_game()
+		return
 	if menu_tween != null: menu_tween.kill()
 	menu_tween = create_tween()
 	menu_tween.tween_property(landing_space, "custom_minimum_size:y", 0.0, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
@@ -362,4 +365,13 @@ func _play() -> void:
 	if file != null: file.store_string(chosen)
 	welcome.hide()
 	navigation.show()
-	message.text = "Host a room, find a game, or build your army."
+	message.text = "Start a local game controlling both sides, host a room, find a game, or build your army."
+
+## Local game navigation launches the existing offline controller with starter armies and both seats under local control.
+## An occupied relay room must be left first so late room messages cannot interrupt the offline match.
+func _start_local_game() -> void:
+	if not NetworkSession.room.is_empty():
+		message.text = "Leave your online lobby before starting a local game."
+		return
+	NetworkSession.online = false
+	get_tree().change_scene_to_file("res://scenes/game.tscn")

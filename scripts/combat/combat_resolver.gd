@@ -107,8 +107,18 @@ static func can_move(source: TargetRef, target: TargetRef, range: int, flying: b
 	var mover := Match.get_unit(source.id) if source != null and source.kind == TargetRef.Kind.UNIT else null
 	if mover != null: range = mover.effective_action_values(action_name, [range])[0]
 	if not _can_start_attack(source, target, 0, range, action_free): return false
-	var unit := Match.get_unit(source.id)
-	if unit == null or unit.type == Enum.type.TEMPLE or source.hex_id() == target.id: return false
+	if mover == null or mover.type == Enum.type.TEMPLE: return false
+	if not _can_land_move(source, target, range, flying): return false
+	if Match.occupants(target.id).is_empty() and mover.has_effective_flag(&"must_bash"):
+		for tile in Match.map:
+			var landing := TargetRef.hex(tile.hex_id)
+			if enemy_on(landing.id, mover.player) != null and _can_land_move(source, landing, range, flying):
+				return false
+	return true
+
+## Movement legality and compulsory Bash use identical range, occupancy and path checks without recursing through the passive.
+static func _can_land_move(source: TargetRef, target: TargetRef, range: int, flying: bool) -> bool:
+	if source.hex_id() == target.id: return false
 	if DistanceSelector.hex_distance(Match.get_hex(source.hex_id()).coordinate,
 			Match.get_hex(target.id).coordinate) > range or _bash_at(target.id): return false
 	for occupant in Match.occupants(target.id):
@@ -289,6 +299,7 @@ static func displace(source: TargetRef, target: TargetRef, distance: int, range:
 ## Implements displacement and records its turn before creating a landing Bash; Banner Bearer reads this history without counters.
 ## The resolved event retains the actor hex as well as the recipient's old/new hexes for directional cosmetic playback.
 ## Captured followups run only after this operation finishes its cleanup.
+## Successful position changes also emit Shifted with the displaced recipient as subject; Walk/Fly and Bomb movement never use this event.
 static func _apply_displace(source: TargetRef, target: TargetRef, distance: int, range: int,
 		pull: bool, action_free: bool = false) -> bool:
 	if not can_displace(source, target, distance, range, pull, action_free): return false
@@ -302,6 +313,10 @@ static func _apply_displace(source: TargetRef, target: TargetRef, distance: int,
 	if not occupant.is_empty(): _create_bash(target.id, occupant[0].id, destination)
 	Match.action_event.emit(EffectEvent.new(&"pull" if pull else &"push", source, target,
 		{"source_hex": source.hex_id(), "origin_hex": old_hex, "destination_hex": destination, "origin_control": origin_control}, &"resolved"))
+	# Shifted describes the displaced recipient, independently of the Push/Pull actor.
+	if destination != old_hex:
+		Match.action_event.emit(EffectEvent.new(&"shifted", target, TargetRef.hex(destination),
+			{"origin_hex": old_hex, "destination_hex": destination, "cause": &"pull" if pull else &"push"}))
 	Match.refresh_control()
 	Match.state_changed.emit()
 	return true
@@ -399,11 +414,13 @@ static func resolve_cannon(attack: CannonAttack) -> void:
 
 ## Implements resolve_cannon inside its public wrapper's mutation boundary.
 ## Captured followups run only after this operation finishes its cleanup.
+## Explosion events retain pre-resolution contact/chain eligibility so the board can skip silent cells even after victims or bombs leave.
 static func _apply_resolve_cannon(attack: CannonAttack) -> void:
 	if attack == null or attack.resolved: return
 	attack.resolved = true
 	var targets := Match.occupants(attack.target_hex)
 	var outcomes: Array[Dictionary] = []
+	var effective := attack.explosion and bomb_blast_effective(attack)
 	for ref in targets:
 		var unit := Match.get_unit(ref.id)
 		if not attack.pierce and unit.has_effective_flag(&"obsidian"):
@@ -428,7 +445,7 @@ static func _apply_resolve_cannon(attack: CannonAttack) -> void:
 	attack.outcome = {"targets": outcomes}
 	var event_name := &"bomb_explosion" if attack.explosion else &"cannon"
 	Match.action_event.emit(EffectEvent.new(event_name, TargetRef.unit(attack.source_id),
-		TargetRef.hex(attack.target_hex), {"outcome": attack.outcome.duplicate(true)}, &"resolved", attack.owner))
+		TargetRef.hex(attack.target_hex), {"outcome": attack.outcome.duplicate(true), "effective": effective}, &"resolved", attack.owner))
 
 ## Resolves a captured Gore hit if its original victim remains on the crossed hex.
 ## resolve_window() runs these after Bow and before Cannon; dead sources cancel their hits.
@@ -564,17 +581,17 @@ static func _apply_throw_bomb(source: TargetRef, target: TargetRef, amount: int,
 	Match.state_changed.emit()
 	return true
 
-## Checks that an inert Bomb is within the acting unit's range and can be removed.
+## Checks an inert bomb or a lit origin still awaiting its frozen combat batch; neighbouring blast cells are never Defuse targets.
 ## Action.can_defuse_bomb() uses the same range rule before target selection.
 static func can_defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
 	if not _can_start_attack(source, target, 0, range, action_free): return false
 	var origin := Match.get_hex(source.hex_id())
 	var destination := Match.get_hex(target.id)
-	return origin != null and destination != null and Match.bomb_at(target.id) != null \
+	return origin != null and destination != null and (Match.bomb_at(target.id) != null or not pending_lit_bomb(target.id).is_empty()) \
 		and DistanceSelector.hex_distance(origin.coordinate, destination.coordinate) <= range
 
-## Removes an inert bomb without triggering its blast.
+## Removes an inert bomb, or restores a lit bomb to unlit and cancels its pending area without refunding ignition costs.
 ## Action.defuse_bomb() calls this after the target remains legal at commit.
 static func defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
@@ -583,16 +600,42 @@ static func defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 	Match.rules_runner.end_boundary()
 	return result
 
-## Implements defuse_bomb inside its public wrapper's mutation boundary.
+## Commits Defuse within its boundary: restore lit origin metadata and retire its whole pending area, or remove one inert bomb.
 ## Captured followups run only after this operation finishes its cleanup.
 static func _apply_defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
 	if not can_defuse_bomb(source, target, range, action_free): return false
+	var lit := pending_lit_bomb(target.id)
+	if not lit.is_empty():
+		var original: CannonAttack = lit[0]
+		var restored := Match.bomb_at(target.id)
+		if restored == null:
+			restored = BombInfo.new()
+			restored.hex_id = target.id
+			restored.owner = original.bomb_owner
+			restored.source_id = original.source_id
+			Match.bombs.append(restored)
+		restored.damage += original.amount
+		restored.pierce = restored.pierce or original.bomb_pierce
+		for attack in lit:
+			attack.resolved = true
+			attack.outcome = {"status": "defused"}
+			Match.pending_cannon_attacks.erase(attack)
+		Match.action_event.emit(EffectEvent.new(&"bomb_defuse", source, target, {"damage": original.amount, "restored_unlit": true}))
+		Match.state_changed.emit()
+		return true
 	var bomb := Match.bomb_at(target.id)
 	Match.bombs.erase(bomb)
 	Match.action_event.emit(EffectEvent.new(&"bomb_defuse", source, target, {"damage": bomb.damage}, &"resolved"))
 	Match.state_changed.emit()
 	return true
+
+## Defuse previews/commit share only unresolved public records for this exact origin; frozen/resolving blasts cannot be rewound.
+static func pending_lit_bomb(hex_id: int) -> Array[CannonAttack]:
+	var result: Array[CannonAttack] = []
+	for attack: CannonAttack in Match.pending_cannon_attacks:
+		if attack.explosion and not attack.resolved and attack.bomb_hex == hex_id: result.append(attack)
+	return result
 
 ## Removes a bomb and schedules a center-plus-adjacent magical area.
 ## Fire declaration calls it; fresh chain blasts are queued for a later response window.
@@ -602,17 +645,14 @@ static func ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant: bool)
 	Match.rules_runner.end_boundary()
 
 ## Implements ignite_bomb inside its public wrapper's mutation boundary.
-## Captures the Bomb center on each blast record for HexCell's pending lit marker.
+## Captures the Bomb center and lighting owner; ring order starts on that player's home side, goes counterclockwise, then resolves center.
 ## Captured followups run only after this operation finishes its cleanup.
 static func _apply_ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant: bool) -> void:
 	if bomb == null or not Match.bombs.has(bomb): return
 	Match.bombs.erase(bomb)
 	var center := Match.get_hex(bomb.hex_id)
 	if center == null: return
-	var adjacent := [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
-		Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
-	var area := [center.coordinate]
-	for direction in adjacent: area.append(center.coordinate + direction)
+	var area := bomb_blast_coordinates(center.coordinate, owner)
 	var source_id := bomb.source_id
 	for coordinate in area:
 		var target_hex := _hex_at_coordinate(coordinate)
@@ -626,12 +666,34 @@ static func _apply_ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant
 		attack.instant = instant
 		attack.explosion = true
 		attack.bomb_hex = bomb.hex_id
+		attack.bomb_owner = bomb.owner
+		attack.bomb_pierce = bomb.pierce
 		attack.chain_owner = 3 - owner
 		if instant: resolve_cannon(attack)
 		else: Match.pending_cannon_attacks.append(attack)
 	Match.action_event.emit(EffectEvent.new(&"bomb_light", TargetRef.unit(source_id),
 		TargetRef.hex(bomb.hex_id), {"damage": bomb.damage, "pierce": pierce}, &"resolved", owner))
 	Match.state_changed.emit()
+
+## Bomb scheduling and focused regressions share the deterministic screen-counterclockwise order, independent of map array IDs.
+## P1 begins southwest, P2 southeast; missing board cells are filtered by the ignition caller and center finishes the sweep.
+static func bomb_blast_coordinates(origin: Vector2i, lighting_player: int) -> Array[Vector2i]:
+	var directions: Array[Vector2i] = [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
+		Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
+	var result: Array[Vector2i] = []
+	var first := 4 if lighting_player == 1 else 0
+	for index in 6: result.append(origin + directions[(first + index) % 6])
+	result.append(origin)
+	return result
+
+## Presentation copies only effective blast cells at the frozen window: eligible contact (even zero damage) or an inert chain bomb.
+## This read-only helper never narrows authoritative area targets; immune-only/empty cells remain valid silent rule resolutions.
+static func bomb_blast_effective(attack: CannonAttack) -> bool:
+	if Match.bomb_at(attack.target_hex) != null: return true
+	for ref in Match.occupants(attack.target_hex):
+		var unit := Match.get_unit(ref.id)
+		if attack.pierce or not unit.has_effective_flag(&"obsidian"): return true
+	return false
 
 ## Returns true for a deployed, current-player source with a valid target and available token.
 ## Bow and Cannon legality checks share this invariant before adding action-specific geometry.

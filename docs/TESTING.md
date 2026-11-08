@@ -22,7 +22,7 @@ python tools/run_tests.py --godot "C:/path/to/Godot_console.exe"
 ```
 
 The default engine is the bundled Godot 4.5.1 console build under `.tools/godot`.
-With no scene names, the runner discovers all fifteen `tests/*_test.tscn` scenes.
+With no scene names, the runner discovers all `tests/*_test.tscn` scenes.
 Each is a separate headless process with isolated APPDATA/LOCALAPPDATA, so it
 cannot load/overwrite the player's real save. The timeout is 180 seconds per
 scene (`--timeout` changes it); sprite-cache verification can take two minutes.
@@ -37,7 +37,8 @@ A script exception cannot be hidden by a scene that eventually exits zero.
 
 | Scene | Coverage |
 | --- | --- |
-| `full_roster_test` | All 83 sprite-backed units for both owners: unique IDs, legacy prefixes, every cost/event/consequence contract, movement defaults, hero choice and snapshots. |
+| `full_roster_test` | All 97 sprite-backed units for both owners, including stable IDs, rule contracts, movement defaults, hero choice and snapshots. |
+| `frontier_units_test` | The eleven frontier cards, including turn-limited Ember capture, Sacrifice life, movement and Bash legality, both Shield recipients and deployment permission. |
 | `adventurer_units_test` | All 20 new cards: printed effects, ownership/range exclusions, atomic payments, modifiers, Return/Revive, counters and next-Fire stickers. |
 | `adventurer_synergies_test` | Nine managed multi-card chains listed below. |
 | `synergy_units_test` | Earlier 28-card block: ammunition, contact rewards, control/thresholds, transfer, sacrifice, trigger suppression, Bash allowances and activity exclusions. |

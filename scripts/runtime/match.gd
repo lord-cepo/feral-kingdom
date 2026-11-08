@@ -110,6 +110,7 @@ func start_local_match(units: Array[UnitInfo], action_allowance: int, deployment
 		unit.iun = army.size()
 		unit.ihx = -1
 		unit.last_displaced_turn = -1
+		unit.trigger_turns.clear()
 		unit.capture_printed_state()
 		unit.t_state = Enum.t_state.UNDEPLOYED
 		unit.active = false
@@ -155,7 +156,7 @@ func _enter_action() -> void:
 	state_changed.emit()
 	_transitioning = false
 
-## Checks card state, first-deployment hero choice, region control, vacancy and allowances; nonchosen hero alternatives cannot enter later.
+## Checks card state, first hero choice, vacancy and allowances; the enemy-control flag also permits opponent-controlled regions.
 ## The local controller calls this both to highlight destinations and before placement.
 func can_deploy(unit_id: int, hex_id: int) -> bool:
 	if _transitioning or rules_runner.busy() or phase != Phase.ACTION or winner != 0 or active_player not in [1, 2]: return false
@@ -168,7 +169,9 @@ func can_deploy(unit_id: int, hex_id: int) -> bool:
 	if unit.deployment_enemy_side and int(tile.side) != 3 - unit.player: return false
 	if not participant.has_deployed and unit.type != Enum.type.HERO: return false
 	if unit.type == Enum.type.HERO and participant.selected_hero_id >= 0 and participant.selected_hero_id != unit_id: return false
-	if occupants(hex_id).size() > 0 or ControlResolver.region_owner(tile) != active_player: return false
+	if not occupants(hex_id).is_empty(): return false
+	var region_owner := ControlResolver.region_owner(tile)
+	if region_owner != active_player and not (region_owner == 3 - active_player and unit.has_effective_flag(&"enemy_control_deploy")): return false
 	return true
 
 ## Places a legal unit inactive with one Stun, pays resources and records the first hero choice; returning that hero never unlocks alternatives.

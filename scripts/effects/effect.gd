@@ -5,6 +5,8 @@ var cost: RefCounted
 enum Policy { DEFAULT, OPTIONAL, MANDATORY }
 var policy := Policy.DEFAULT
 var condition: Condition
+## Stable printed key for a trigger that can be captured once per unit per turn.
+var once_per_turn_key := ""
 var event: EventPhrase
 var consequence: RefCounted
 ## True for engine-supplied rules that are executable but omitted from printed board summaries.

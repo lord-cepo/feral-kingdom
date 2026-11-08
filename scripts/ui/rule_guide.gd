@@ -47,6 +47,7 @@ const ENTRIES := {
 	"mshield": "Magic shield: temporary magical protection, consumed on magical contact.",
 	"heart": "Life: current health and maximum health. Damage changes current health; upgrades can change both.",
 	"bomb": "Bomb: Fire ignites it, spreading blasts radially to affected hexes.",
+	"shifted": "Shifted: this unit changed position through forced displacement (currently Push or Pull). Walk and Fly do not count.",
 	"push": "Push: move the chosen target away from the acting unit.",
 	"pull": "Pull: move the chosen target toward the acting unit.",
 }

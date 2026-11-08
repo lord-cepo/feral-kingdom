@@ -18,7 +18,7 @@ Implicit Walk one remains unless a printed ordinary Walk/Fly replaces it.
 | Unit | Life | Deploy | Rules |
 | --- | ---: | --- | --- |
 | Porcupine Barbarian | 3 | IF | Walk 2; live +X/+X, X distinct adjacent friends. |
-| Marmot Berserker | 4 | S | Walk onto an enemy within 2 with normal path legality; Shield 2/0. |
+| Marmot Berserker | 4 | S | [S] Walk onto an enemy within 2 with normal path legality; [AS] Shield 2/0. |
 | Dormouse Rogue | 2 | Opponent I | [AS] remove one adjacent enemy counter: gain one of that exact kind; [AS] remove one own counter: defeat a deployed enemy. |
 | Flying Squirrel Ranger | 2 | I | Pierce Bow 1/3; Mshield 1/1. |
 | Tamia Hunter | 2 | S | Printed control +2; [AS] remove one adjacent friend's counter: Reset any unit within 2. |
@@ -123,3 +123,11 @@ The user authorized `TEST` on 2026-10-29. These and the earlier suites were
 executed through `tools/run_tests.py`; `adventurer_synergies_test.tscn` adds nine
 managed cross-roster chains. [TESTING.md](TESTING.md) documents coverage, isolated
 save data and fixes found during execution. Future runs still require `TEST`.
+
+Marmot Berserker cost revision: `AdventurerCatalogue.marmot_berserker` authors
+Walk with `Verbs.movement(2, false, true)` and `SynergyRules.command(..., 1, false)`.
+The shared activity payment deactivates it and adds one self-Stun; the runner
+spends no player action. Enemy-only destinations and ordinary path legality remain.
+Example: using Walk onto an enemy keeps your remaining player actions unchanged.
+`adventurer_units_test.gd::test_berserker_stun_only_walk` covers the committed cost,
+activity, owner eligibility and invalid destinations; run only on a TEST request.

@@ -5,8 +5,7 @@ The approved crowned heroes and their exact timing/eligibility are in
 [HERO_UNITS.md](HERO_UNITS.md): Grey Squirrel King (5 life), Jerboa King (6), Marmot Queen (6).
 Shared concise hover notation and the distinct Mshield icon/animation are specified
 in [HOVER_TEXT.md](HOVER_TEXT.md). Friendly targets include every unit type unless
-an explicit troop/hero/temple filter says otherwise. Jerboa King's revised normal
-Move support grants the exact friendly mover +2/+0 through the captured End cleanup.
+an explicit troop/hero/temple filter says otherwise. Jerboa King: friend is shifted: it has +2/+0 until enemy End. Shifted means a forced position change (currently Push/Pull), excluding Walk/Fly, deployment and Return. The exact friend receives the bonus; expiry follows the king's enemy End.
 The approved 2026-10-28 roster and detailed timing/counter rulings are in
 [SYNERGY_UNITS.md](SYNERGY_UNITS.md), based on
 [MY_28_UNIT_PROPOSALS.md](MY_28_UNIT_PROPOSALS.md).
@@ -347,7 +346,7 @@ change later results.
 | 6.14 | Cannon(D,R) | Black magic along a line up to R; each affected occupant of either player takes max(0,D−magical modifier) lasting damage. |
 | 6.15 | Bomb-throw(D,R) | Place an inert bomb of value D within R; bombs on the same hex merge damage. Inert bombs do not explode by themselves. |
 | 6.16 | Bomb-light / explosion | Fire or an explosion can light a bomb. Fire on a bomb becomes the bomb blast rather than also damaging its occupant with Fire. Blast covers center and adjacent playable hexes, deals black magical damage, and normally waits for the next opposing response. Fresh chain explosions wait for a later window. |
-| 6.17 | Bomb-defuse | Remove an inert bomb. Triggered Light/Defuse are forced and activity-free in JS, distinct from chosen normal actions. |
+| 6.17 | Bomb-defuse | A pending lit origin returns to unlit, cancelling its whole queued area; preserve its original owner, source, damage and stored Pierce. An already-unlit bomb is removed. Once the blast batch is frozen/resolving it cannot be defused. Triggered Light/Defuse are forced and activity-free in JS, distinct from chosen normal actions. |
 | 6.18 | Shield(V,R) / Mshield(V,R) | Add V temporary physical/magical protection to an ally within R. Grants stack; range zero targets the actor. |
 | 6.19 | Push(N,R) / Pull(N,R) | Select an aligned target within R and displace it N steps away/toward along the line. Intermediate units/gap do not block; landing must be playable, not its ally or an existing Bash. Enemy landing creates Bash. |
 | 6.20 | Bomb displacement | Push/Pull can move bombs. Merging sums damage and preserves piercing if either bomb had it. |
@@ -487,3 +486,27 @@ cannot create a missing type. Merchant's recipient-owned next-Fire Pierce/Instan
 is consumed at successful declaration, survives Return/End and clears on Reset.
 Jester reacts to a new enemy regional-control transition, not repeated reads.
 Scout requires presence on enemy Starting, regardless of who controls it.
+
+Bomb sweep ruling (2026-11-06): the original lit marker stays on its origin during
+the response window. At blast resolution, visual copies spread only to neighbours
+with contact-capable units or an inert bomb to ignite; empty and non-pierced
+Obsidian-only cells receive no copy. Zero-damage contact remains effective.
+The ring resolves from the lighting player's geographical side (P1 southwest,
+P2 southeast), counterclockwise, with the original center last. The full playable
+area remains authoritative, including silent cells. Each finite explosion and its
+Slash/Skull/trigger followups settle before the next hex resolves.
+
+## Frontier additions (2026-11-07)
+
+A once-per-turn trigger reserves its occurrence at capture. Later events in
+that turn, including ones queued behind it, cannot capture it again. Reset
+does not undo that reservation. Positive Ember additions emit one occurrence
+per addition regardless of amount. Sacrifice may supply the donor's actual
+life at payment to a consequence; later departure effects cannot change X.
+
+Enemy geography and regional control are separate. The Mole Shaman checks
+enemy geography for its Revive, while the Mara Merchant may deploy in vacant
+enemy-controlled hexes with all other deployment requirements intact.
+Compulsory Bash restricts a Walk to legal enemy landings if at least one exists.
+It neither forces a command nor changes ordinary path and occupancy rules.
+See [Frontier units](FRONTIER_UNITS.md) for the affected cards and timing.

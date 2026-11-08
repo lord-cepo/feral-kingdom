@@ -50,7 +50,7 @@ func end_boundary() -> void:
 
 ## Validates an occurrence, filters continuous defeat policy, and captures matching rules now.
 ## Consequences cannot change membership; Match.action_event calls this and defeat captures before removal.
-## Live EXTRA_DEATH_TRIGGER contributions create independent activation objects with their own target choices for each actual death occurrence.
+## Limited triggers reserve their turn before enqueueing; death amplifiers create independent activations for actual death.
 func capture_event(event: EffectEvent) -> void:
 	if event == null or dispatched_occurrences.has(event.occurrence_id): return
 	dispatched_occurrences[event.occurrence_id] = true
@@ -76,6 +76,10 @@ func capture_event(event: EffectEvent) -> void:
 					diagnostics.append(ctx.error)
 					continue
 				if not passes: continue
+				var turn_key := definition.once_per_turn_key
+				if not turn_key.is_empty():
+					if unit.trigger_turns.get(turn_key, -1) == event.turn_number: continue
+					unit.trigger_turns[turn_key] = event.turn_number
 				for repeat in _death_activation_count(unit, event):
 					var execution := EffectExecution.new(definition, ctx.source, event)
 					execution.captured_trigger = true
@@ -246,6 +250,9 @@ func _cost_choices_available(payments: Array, index: int, ctx: RuleContext, coun
 		var previous := ctx.completed_results
 		ctx.completed_results = previous.duplicate()
 		var amount := int(verb.user_params[0]) if verb.name in [&"decrement", &"choose_counter"] else -1
+		if verb.name == &"sacrifice":
+			var donor_life: Vector2i = next_counters.get("life:%d" % target.id, Vector2i(Match.get_unit(target.id).actual_life, 0))
+			amount = donor_life.x
 		var record := {"subject": pair[0], "targets": [target], "success": true, "amount": amount, "preview": true}
 		ctx.completed_results["cost_choice_%d" % index] = record
 		ctx.completed_results["cost_%d" % index] = record

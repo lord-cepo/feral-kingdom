@@ -44,6 +44,8 @@ var action_replays: Array[Node2D] = []
 var presented_triggers: Dictionary = {}
 var trigger_cues: Dictionary = {}
 var phase_sign_feedback: WeakRef
+var continuous_cues: Node
+var serial_feedback: Node
 var observed_life: Dictionary = {}
 var life_feedback: Dictionary = {}
 var heart_pulses: Dictionary = {}
@@ -60,6 +62,7 @@ var external_stun_units: Dictionary = {}
 ## BoardAmbience is initialized after terrain layout and runs independently of rules/input.
 ## Popup-window input has its own handler; graphical trigger gates retain runner work until two player acknowledgements.
 ## Registers finite-animation waits and a bounded X picker; choosing an amount never pays outside PhraseExecution's revalidation boundary.
+## SerialFeedback observes positive value changes and queues recipient clips behind finite causal animations.
 func _ready() -> void:
 	if Match.map.is_empty():
 		var regions := RegionMap.new()
@@ -69,6 +72,12 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_layout_board)
 	_layout_board()
 	$Ambience.setup(self)
+	continuous_cues = preload("res://scripts/board/continuous_cues.gd").new()
+	add_child(continuous_cues)
+	continuous_cues.setup(self)
+	serial_feedback = preload("res://scripts/board/serial_feedback.gd").new()
+	add_child(serial_feedback)
+	serial_feedback.setup.call_deferred(self)
 	for control in [choice_menu, offboard_button, confirm_button, selection_label, amount_controls]:
 		$Interface.add_child(control)
 	selection_label.position = Vector2(16, 16)
@@ -107,6 +116,7 @@ func _ready() -> void:
 
 ## Board startup and NetworkSession snapshot/replay completion restore stationary Fire/Bow counters for current record identities.
 ## Existing markers are retained; snapshots replace records, so stale markers retire through their ordinary cosmetic lifecycle.
+## Pending bomb centers also regain their origin-only overlay so reconnects use the same resolution-time spread.
 func restore_pending_projectiles() -> void:
 	var shown := {}
 	for child in get_children():
@@ -115,6 +125,14 @@ func restore_pending_projectiles() -> void:
 		for attack in attacks:
 			if attack.resolved or shown.has(attack.get_instance_id()): continue
 			_add_fire_visual(attack.origin_hex, attack.target_hex, attack.amount, attack.owner, attack, true, attack.pierce, attack is BowAttack)
+	var bomb_centers := {}
+	for attack: CannonAttack in Match.pending_cannon_attacks:
+		if not attack.explosion or attack.resolved or bomb_centers.has(attack.bomb_hex): continue
+		bomb_centers[attack.bomb_hex] = true
+		var exists := false
+		for child in get_children():
+			if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.attacks.has(attack): exists = true
+		if not exists: _present_bomb_blast(attack.bomb_hex)
 
 ## _ready restores pending markers; declarations start travelling Fire/Bow/Cannon markers.
 ## Each icon-only marker owns its cosmetic timing and optional pending attack lifetime.
@@ -197,7 +215,7 @@ func _highlight_resolved_attack(event: EffectEvent) -> void:
 ## Bomb Light starts cosmetic radial ignition after repaint, waiting for any incoming Fire to reach the bomb marker.
 ## Resolved attack events pulse their captured destination rim, including misses and area-blast hexes; cancelled Bashes do not pulse.
 ## Resolved bomb damage starts the lit-bomb explosion before damage feedback; radial ignition copies retire at the same hex.
-## Empty blast hexes use the shared replica fade; captured outcomes retain victim identity even after lethal damage removes the unit.
+## Only effective contacts/chain bombs play explosions; captured outcomes retain victim identity even after lethal damage removes the unit.
 ## Resource/counter grants and Return play the deployed source's mapped clip; Return also snapshots its exact departing participant before repaint.
 func _on_action_presentation(event: EffectEvent) -> void:
 	if NetworkSession.fast_replay: return
@@ -206,7 +224,7 @@ func _on_action_presentation(event: EffectEvent) -> void:
 		add_child(returning)
 		returning.setup(self, event)
 	if event.action == &"bomb_explosion" and event.stage == &"resolved" and event.target != null \
-			and not event.data.get("outcome", {}).get("targets", []).is_empty():
+			and bool(event.data.get("effective", not event.data.get("outcome", {}).get("targets", []).is_empty())):
 		var hex_id := event.target.hex_id()
 		if Match.get_hex(hex_id) != null:
 			var explosion := preload("res://scripts/board/bomb_explosion.gd").new()
@@ -745,16 +763,13 @@ func observe_execution(execution: EffectExecution) -> void:
 	if not execution.finished.is_connected(completion): execution.finished.connect(completion)
 	_on_selection_changed()
 
-## Resolved action presentation calls this for a recipient-bound, finite cosmetic clip, including Shield/Mshield and Stun.
+## Resolved Shield/Mshield and Stun presentation queues a finite recipient clip after prior action/damage feedback.
 ## Unit identity chooses the recipient's actual figure/Bash side; no effect or cost is executed by the burst.
 func _show_target_feedback(target: TargetRef, clip: String, duration: float) -> void:
 	if target == null or target.kind != TargetRef.Kind.UNIT or not target.has_hex(): return
 	var unit := Match.get_unit(target.id)
 	if unit == null: return
-	var marker := preload("res://scripts/board/board_trigger.gd").new()
-	marker.setup(self, unit, target.hex_id(), clip, duration)
-	add_child(marker)
-	marker._process(0.0)
+	serial_feedback.enqueue(unit, clip, duration)
 
 ## observe_execution() detects captured triggers at first activation, not individual consequence events or resumed phases.
 ## Weak execution identities prevent replay on cost-trigger resumes without retaining completed activations.
@@ -1012,7 +1027,7 @@ func _attack_feedback_delay(hex_id: int) -> float:
 		if child.get_script() == FIRE_VISUAL and child.target_hex == hex_id:
 			delay = maxf(delay, FIRE_VISUAL.TRAVEL_SECONDS - child.elapsed + 0.25)
 		elif child.get_script() == preload("res://scripts/board/bomb_blast.gd"):
-			delay = maxf(delay, child.delay + child.TRAVEL - child.elapsed + 0.25)
+			delay = maxf(delay, child.remaining_spread() + 0.25)
 		elif child.get_script() == preload("res://scripts/board/bomb_explosion.gd") and child.hex_id == hex_id:
 			delay = maxf(delay, child.delay + child.DURATION - child.elapsed + 0.25)
 	return delay
@@ -1180,7 +1195,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _exit_tree() -> void:
 	if not NetworkSession.online: _cancel_current()
 
-## Resolved bomb_light starts one cosmetic radial blast; matching Fire markers supply their remaining travel delay.
+## Resolved bomb_light retains one lit origin; matching Fire markers delay ignition, and the frozen window later starts radial copies.
 ## The blast overlay owns only visibility/animation and captures pending area records without changing their combat schedule.
 func _present_bomb_blast(hex_id: int) -> void:
 	if Match.get_hex(hex_id) == null: return
@@ -1222,7 +1237,7 @@ func _trigger_animation_busy() -> bool:
 		if child.get_script() == preload("res://scripts/board/board_return.gd") and not child.is_queued_for_deletion(): return true
 		if child.get_script() == preload("res://scripts/board/bomb_explosion.gd") and not child.is_queued_for_deletion(): return true
 		if child.get_script() == FIRE_VISUAL and child.elapsed < FIRE_VISUAL.TRAVEL_SECONDS: return true
-		if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.elapsed < child.delay + child.TRAVEL: return true
+		if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.empty_fade_busy(): return true
 	return false
 
 ## Hot-seat input submits the next missing identity; online Space/blink input submits only this client's authenticated seat.
@@ -1256,9 +1271,15 @@ func acknowledge_trigger_for_player(player: int) -> void:
 ## RulesRunner queries only finite action/impact/death/arrival feedback; ambient loops, pending counters and old-action replays never block phases.
 ## The sign's own entrance also settles before the next phase so brief phase labels remain synchronized with authoritative state.
 ## Bomb replicas remain persistent while any captured blast record is unresolved, including records already frozen out of the public queue.
-## Empty replicas finish their shared fade before the frozen blast batch begins its individual occupied-hex animations.
+## Effective-neighbour copies finish spreading before the frozen blast batch begins its individual hex explosions.
 ## Reconnect fast replay bypasses only these cosmetic waits while rebuilding accepted history.
 func _phase_presentation_busy() -> bool:
+	if NetworkSession.fast_replay: return false
+	return (serial_feedback != null and serial_feedback.busy()) or _finite_presentation_busy()
+
+## SerialFeedback checks finite visuals independently of its own queue, avoiding a self-blocking phase wait.
+## Existing combat, damage, movement and sign transitions remain the authority for when the next recipient clip may start.
+func _finite_presentation_busy() -> bool:
 	if NetworkSession.fast_replay: return false
 	if not heart_pulses.is_empty(): return true
 	if _trigger_animation_busy(): return true

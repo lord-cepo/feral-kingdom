@@ -69,7 +69,7 @@ The user's 2026-11-05 spot corrections define shared presentation rules, not uni
 - Simple actions use amount/icon/range. Each family's normal ownership filter is implicit: Shield/Mshield/Mend choose friends; Stun/Push/Pull use the authored hostile shorthand. Other target restrictions remain in structural descriptions.
 - Default [AS] is implicit for compact actions. Written consequences show `[AS]: ...`; independent [S]/[A]/[2S] and resource costs retain their actual markers. A Disable-to-deployment conversion reads `[AS] disable friend: +1 deploy`, without changing its sequential paid behavior. Disable's normal in-hand non-hero restriction remains authoritative in its verb and glossary.
 - Modifier auras read `adjacent friends with one or more projectiles have +1/+0`. Source conditions read `while this unit is wounded: +0/+1 to adjacent friends`. Friends means every friendly unit type; an explicit troop filter is a separate condition. Adjacency excludes distance zero.
-- A movement-to-modifier grant reads `moved friends have +2/+0 until End`. A nearby Sacrifice condition is folded into the event once: `friend is sacrificed within 2: ...`. Two automatic same-recipient Shield/Mshield grants share `and ... to this unit` while remaining ordered rule actions.
+- Jerboa King reads `friend is shifted: it has +2/+0 until enemy End`. Shifted is successful forced displacement, currently Push/Pull; ordinary Walk/Fly do not qualify. A nearby Sacrifice condition is folded into the event once: `friend is sacrificed within 2: ...`. Two automatic same-recipient Shield/Mshield grants share `and ... to this unit` while remaining ordered rule actions.
 
 ## Caller map and examples
 
@@ -85,3 +85,11 @@ The user's 2026-11-05 spot corrections define shared presentation rules, not uni
 The importer preserves all nine original 32px animation frames. Only the UI glyph is alpha-cropped and nearest-resized to the existing 48px source height; `GameIcons.bb` sizes it to the requested text height. The finite effect remains independent of authoritative rules and persistent ambience.
 
 Examples are the Red Squirrel King's Fire trigger, Grey Squirrel King's Supply/Shield/loaded aura, Jerboa King's Move grant, Marmot Queen's Mend/Sacrifice/wounded aura, and Wild Tamia's Disable conversion. Focused coverage is in `tests/hero_units_test.tscn`; it includes ownership/type exclusions, captured modifier lifetime/snapshot persistence and distinct Mshield frame loading. Tests remain unrun unless requested with `TEST`.
+
+Upgrade wording now uses the dedicated PixelLab pink-arrow object through
+GameIcons.bb("upgrade"). The preceding damage/range pair and following radius or
+recipient text retain their meaning, including chosen-ability sequences. Applied
+parameter increases play the corresponding nine-frame arrow via SerialFeedback.
+GameIcons.action_path("upgrade") supplies a tightly cropped AtlasTexture to both
+inline descriptions and plain buttons; GameIcons.bb("upgrade") renders it at
+12x19 pixels at the default text size, removing transparent gaps between words.

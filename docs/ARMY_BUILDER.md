@@ -41,6 +41,11 @@ and connects search `text_changed` to `_filter_units`. `_ready` creates the shar
 inspector through `_build_info_panel`; root `resized` calls `_layout_info_panel`.
 Row `mouse_entered` and `focus_entered` call `_inspect_unit`, which installs
 `army_unit_choice.gd::make_info_card` content and resets scrolling immediately.
+The card decorates rules with `RuleGuide.decorate`; metadata hover signals call
+`_show_rule_guide` / `_hide_rule_guide`, using shared `RuleGuide.description`
+entries. `_fade_rule_guide` blends an explanation below the rules on ordinary
+hover, without Ctrl. Hover Disable or Ember to read its meaning, or hover the
+Fire icon for its attack explanation.
 `_navigate` and `_filter_units` dismiss the inspector. For example, inspecting
 Dormouse Rogue shows a blue Intermediate stripe and an Enemy side label;
 ordinary Starting units show a red stripe.
@@ -56,3 +61,11 @@ under `assets/ui/*-cursor.svg`, with explicit hotspots in the shared installer.
 For example, hover the army name/search field for the I-beam, or drag selected
 text within a text field for the native drag/drop feedback. Army rows still use
 checkbox selection; cursor styling does not add a new deck drag/drop operation.
+
+Local play: after entering a name, choose **Local game** to play offline with
+both starter armies under your control. Take each side's actions on its turn;
+trigger acknowledgements use the existing successive local-player prompts.
+No relay connection is required. Leave any occupied online lobby first.
+Caller map: the navigation button calls `_navigate("Local game")`, which calls
+`_start_local_game`; that opens `game.tscn` with NetworkSession.online disabled.
+`local_match_controller.gd::_ready` uses its existing offline starter-army path.

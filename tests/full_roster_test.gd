@@ -30,7 +30,7 @@ func _ready() -> void:
 	check(inventory.all(BoardCharacter.supports), "Catalogue API itself excludes every unsupported legacy portrait-only definition")
 	check(not inventory.any(func(unit: UnitInfo) -> bool: return unit.uuid == "alps-lone-wolf-p1"), "A known unsprited legacy factory stays out of the playable inventory")
 	check(roster.size() == inventory.size() * 2, "Both players receive one copy of every sprite-backed unit")
-	check(inventory.size() == 86 and roster.size() == 172, "Exactly 86 sprite-backed units are available per owner")
+	check(inventory.size() == 97 and roster.size() == 194, "Exactly 97 sprite-backed units are available per owner")
 	var identities := {}
 	for unit in roster:
 		check(BoardCharacter.supports(unit), "No sprite-less card enters the local roster")

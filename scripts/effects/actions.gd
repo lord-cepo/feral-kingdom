@@ -211,18 +211,25 @@ static func grant_action_values(subject: TargetRef, target: TargetRef,
 	return true
 
 ## Timed modifier selection requires a concrete deployed recipient; card selectors own ownership and triggering eligibility.
-static func can_grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int) -> bool:
+static func can_grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int,
+		enemy_end: bool = false, _stack: bool = false) -> bool:
 	return can_grant_action_values(subject, target, &"modifiers", [physical, magical])
 
-## Captures a recipient-bound modifier pair through the current End; identical same-source grants refresh rather than stack on repeated Move.
-## Different sources stack independently; Match cleanup and snapshot persistence use the shared typed TimedGrant records.
-static func grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int) -> bool:
+## Captures modifiers through current End or enemy End. Identical awards refresh unless the card explicitly stacks each payment.
+## Match cleanup and snapshot persistence use the shared typed TimedGrant records for either policy.
+static func grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int,
+		enemy_end: bool = false, stack: bool = false) -> bool:
 	if not can_grant_modifiers(subject, target, physical, magical): return false
+	var expiry_player := 3 - Match.owner_of(subject) if enemy_end else Match.active_player
+	var expiry_turn := Match.turn_number + (1 if expiry_player != Match.active_player else 0)
 	var recipient := Match.get_unit(target.id)
-	for grant in recipient.timed_grants:
-		if grant.kind == TimedGrant.Kind.MODIFIERS and grant.source.same(subject) and grant.parameters == [physical, magical] \
-				and grant.expires_player == Match.active_player and grant.expires_turn == Match.turn_number: return true
-	var grant := TimedGrant.modifiers(Match.allocate_timed_grant_id(), subject, [physical, magical], Match.active_player, Match.turn_number)
+	if not stack:
+		for grant in recipient.timed_grants:
+			if grant.kind == TimedGrant.Kind.MODIFIERS and grant.source.same(subject) and grant.parameters == [physical, magical] \
+					and grant.expires_player == expiry_player:
+				grant.expires_turn = expiry_turn
+				return true
+	var grant := TimedGrant.modifiers(Match.allocate_timed_grant_id(), subject, [physical, magical], expiry_player, expiry_turn)
 	recipient.timed_grants.append(grant)
 	Match.action_event.emit(EffectEvent.new(&"grant_modifiers", subject, target, {"values": [physical, magical], "grant_id": grant.id}))
 	Match.refresh_control()
@@ -429,15 +436,20 @@ static func displace_bomb(subject: TargetRef, target: TargetRef, distance: int, 
 		pull: bool, action_free: bool) -> bool:
 	return CombatResolver.displace_bomb(subject, target, distance, range, pull, action_free)
 
-static func can_shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool) -> bool:
+## Shield normally protects friends; the Paladin's explicit enemy-hero mode accepts only that opposing deployed hero.
+static func can_shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool, enemy_hero: bool = false) -> bool:
 	if amount < 0 or target == null or target.kind != TargetRef.Kind.UNIT or not target.has_hex(): return false
-	if Match.owner_of(subject) != Match.owner_of(target): return false
+	var friendly := Match.owner_of(subject) == Match.owner_of(target)
+	if enemy_hero:
+		if friendly or Match.get_unit(target.id).type != Enum.type.HERO: return false
+	elif not friendly: return false
 	var key := UnitInfo.TEMP_MAGICAL_COUNTER if magical else UnitInfo.TEMP_PHYSICAL_COUNTER
 	var counter := Match.get_property(TargetRef.property(target, key))
 	return counter != null and counter.increment == Enum.p_increment.COUNTER
 
-static func shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool) -> bool:
-	if not can_shield(subject, target, amount, magical): return false
+## Shield verbs commit one checked temporary counter gain and retain the granting source in the emitted occurrence.
+static func shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool, enemy_hero: bool = false) -> bool:
+	if not can_shield(subject, target, amount, magical, enemy_hero): return false
 	var key := UnitInfo.TEMP_MAGICAL_COUNTER if magical else UnitInfo.TEMP_PHYSICAL_COUNTER
 	var counter := Match.get_property(TargetRef.property(target, key))
 	if counter == null or counter.increment != Enum.p_increment.COUNTER: return false

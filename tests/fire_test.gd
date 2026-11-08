@@ -66,11 +66,75 @@ func _ready() -> void:
 	test_instant_and_immunity()
 	test_bow_and_cannon()
 	test_bombs()
+	test_bomb_sweep()
+	test_lit_bomb_defuse()
 	test_gore_displacement_and_bash()
 	test_events_and_victory()
 	test_phase_guards()
 	print("Fire integration: %d checks, %d failures" % [checks, failures])
 	get_tree().quit(0 if failures == 0 else 1)
+
+## Blast scheduling captures the igniting player's home-side counterclockwise sweep, independent of thrower, source movement or map ID order.
+## Effective-copy eligibility includes zero contact and chain bombs, excludes empty and immunity-only cells, and never removes rule targets.
+func test_bomb_sweep() -> void:
+	for owner in [1, 2]:
+		fixture()
+		Match.map.clear()
+		var ring: Array[Vector2i] = [Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1), Vector2i(1, 0)]
+		Match.map.append(HexInfo.new(0, Vector2i.ZERO, Enum.region.FRONT, Enum.side.NONE, 0))
+		for coordinate in ring: Match.map.append(HexInfo.new(Match.map.size(), coordinate, Enum.region.FRONT, Enum.side.NONE, 0))
+		check(CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(0), 1, 0, false), "Place the sweep bomb independently of igniting owner")
+		CombatResolver.ignite_bomb(Match.bomb_at(0), owner, false, false)
+		var expected: Array[Vector2i] = [Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i.ZERO] if owner == 1 else [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1), Vector2i.ZERO]
+		var actual: Array[Vector2i] = []
+		for attack: CannonAttack in Match.pending_cannon_attacks:
+			actual.append(Match.get_hex(attack.target_hex).coordinate)
+			check(attack.owner == owner, "Sweep retains lighting owner rather than bomb thrower")
+		check(actual == expected, "Ring starts at lighting player's side, sweeps counterclockwise, center last")
+		check(Match.pending_cannon_attacks.size() == 7, "Silent empty cells remain authoritative blast targets")
+	var empty := CannonAttack.new()
+	empty.explosion = true
+	empty.target_hex = 6
+	check(not CombatResolver.bomb_blast_effective(empty), "Empty neighbour does not receive a visual copy")
+	var occupied := CannonAttack.new()
+	occupied.explosion = true
+	occupied.target_hex = 1
+	occupied.amount = 0
+	check(CombatResolver.bomb_blast_effective(occupied), "Zero-damage contact remains effective")
+	set_flag(1, &"obsidian")
+	check(not CombatResolver.bomb_blast_effective(occupied), "Immune-only neighbour receives no copy")
+	occupied.pierce = true
+	check(CombatResolver.bomb_blast_effective(occupied), "Pierce restores contact on immune neighbour")
+	var chain := BombInfo.new()
+	chain.hex_id = 6
+	Match.bombs.append(chain)
+	check(CombatResolver.bomb_blast_effective(empty), "An otherwise empty chain-bomb hex receives a copy")
+
+## Lit Defuse restores original ownership/value/Pierce and cancels only its pending blast; neighbours/range/frozen batches never qualify.
+func test_lit_bomb_defuse() -> void:
+	fixture()
+	CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(1), 3, 1, true)
+	CombatResolver.ignite_bomb(Match.bomb_at(1), 2, false, false)
+	check(CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "Either owner can Defuse a pending lit origin within range")
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(0), 1), "A blast neighbour is not a lit bomb")
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 0), "Out-of-range lit origin remains illegal")
+	var snapshot := preload("res://scripts/runtime/match_snapshot.gd")
+	var saved := snapshot._capture_state()
+	snapshot._apply_state(saved)
+	var records := CombatResolver.pending_lit_bomb(1)
+	check(CombatResolver.defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "Defuse restores the lit bomb after snapshot roundtrip")
+	var restored := Match.bomb_at(1)
+	check(restored != null and restored.owner == 1 and restored.source_id == 0 and restored.damage == 3 and restored.pierce, "Unlit restoration preserves bomb owner/source/value/Pierce rather than lighting owner/Pierce")
+	check(Match.pending_cannon_attacks.is_empty() and records.all(func(attack: CannonAttack) -> bool: return attack.resolved and attack.outcome.get("status") == "defused"), "Every cancelled area record is retired for rules and presentation")
+	var life := Match.army[1].actual_life
+	CombatResolver.resolve_window(1)
+	check(Match.army[1].actual_life == life and not events.any(func(event: EffectEvent) -> bool: return event.action in [&"bomb_hit", &"bomb_explosion"]), "Defused pending blast emits no damage, explosion or chain")
+	check(CombatResolver.defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1) and Match.bomb_at(1) == null, "Defuse of the now-unlit bomb retains ordinary removal behavior")
+	fixture()
+	CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(1), 2, 1, false)
+	CombatResolver.ignite_bomb(Match.bomb_at(1), 1, false, false)
+	Match.pending_cannon_attacks.clear()
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "A frozen/resolving blast cannot be rewound by Defuse")
 
 func test_modifiers() -> void:
 	fixture()

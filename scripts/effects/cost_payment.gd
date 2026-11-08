@@ -6,6 +6,7 @@ extends RefCounted
 ## Checks cumulative counter/activity spending before mutating any selected resource.
 ## EffectExecution calls after collecting identities/amounts without payment; live bindings and cumulative ledgers reject stale or overspent X.
 ## Selection-only anchors do not mutate; Disable/Return/Sacrifice reserve departures and deployment payments share a cumulative player ledger.
+## A committed Sacrifice records actual life before defeat so the Alchemist can read its paid amount.
 static func commit(choices: Array[PhraseExecution]) -> String:
 	var counters: Dictionary = {}
 	var activity: Dictionary = {}
@@ -69,6 +70,7 @@ static func commit(choices: Array[PhraseExecution]) -> String:
 			Action.return_to_hand(choice.subject, target)
 			continue
 		elif verb.name == &"sacrifice":
+			choice.chosen_amount = Match.get_unit(target.id).actual_life
 			SynergyActions.sacrifice(choice.subject, target)
 			continue # Sacrifice and Die were published by the shared mutation.
 		elif verb.name == &"decrement":

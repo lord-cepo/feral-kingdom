@@ -25,7 +25,7 @@ func output_kind(_ctx: RuleContext = null) -> int:
 func validate(_ctx: RuleContext = null) -> String:
 	return "Distance must be nonnegative." if distance < 0 else ""
 
-## Returns current matching hexes without mutation; action phrases include live Move/Fly/Fire/Cannon range grants.
+## Returns current matching hexes without mutation; phrase execution and availability previews both include live range grants.
 func resolve(ctx: RuleContext) -> Array[TargetRef]:
 	var result: Array[TargetRef] = []
 	var origin := Selectors.Reference.new(center).get_ref(ctx)
@@ -37,11 +37,11 @@ func resolve(ctx: RuleContext) -> Array[TargetRef]:
 		if actor != null:
 			var bonus := actor.ability_bonus(ctx.query_verb)
 			effective_distance += bonus.x if ctx.query_verb.name in [&"move", &"fly"] else bonus.y
-	if ctx is PhraseExecution and ctx.phrase != null and ctx.subject != null \
+	if ctx != null and ctx.query_verb != null and ctx.subject != null \
 			and ctx.subject.kind == TargetRef.Kind.UNIT:
 		var unit := Match.get_unit(ctx.subject.id)
 		if unit != null:
-			var action_name: StringName = ctx.phrase.verb.name
+			var action_name: StringName = ctx.query_verb.name
 			if action_name in [&"move", &"fly"]:
 				effective_distance = unit.effective_action_values(action_name, [effective_distance])[0]
 			elif action_name == &"fire":

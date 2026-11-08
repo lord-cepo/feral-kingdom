@@ -598,7 +598,7 @@ func test_hero_sacrifice_window() -> void:
 func test_registration_and_text() -> void:
 	fixture()
 	var additions := SynergyCatalogue.all_units(1)
-	check(additions.size() == 28 and CardCatalogue.starter_army().size() == 172, "The 28 synergy cards remain in the expanded 86-card roster per owner")
+	check(additions.size() == 28 and CardCatalogue.starter_army().size() == 194, "The 28 synergy cards remain in the expanded 97-card roster per owner")
 	for unit in additions:
 		check(BoardCharacter.supports(unit) and FileAccess.file_exists(BoardCharacter.portrait_path(unit)), unit.name + " uses imported PixelLab art")
 		for line in EffectText.unit_lines(unit): check(not line.contains("Unrecognized"), unit.name + " has a supported rule description")

@@ -60,6 +60,8 @@ var printed_state: Dictionary = {}
 var max_life_changes: Array[Dictionary] = []
 var ability_upgrades: Array[Dictionary] = []
 var deployment_enemy_side := false
+## RulesRunner records limited trigger captures here; Reset and Return preserve the turn ledger.
+var trigger_turns: Dictionary = {}
 var copied_effects: Array[Dictionary] = []
 ## Historical forced movement survives Reset; Banner Bearer compares its turn instead of granting a mutable flag.
 var last_displaced_turn := -1
@@ -368,7 +370,7 @@ func state_modifiers(axis: int = -1) -> Vector2i:
 
 ## Hover modifier metadata queries this read-only breakdown using the same counters, state rules, auras and control as modifier getters.
 ## Counter totals have no historical source attribution; live contributions retain their actual source unit name, including copied-state origins.
-## Timed modifier rows identify their stored amount and End lifetime independently of live aura eligibility.
+## Hover modifier breakdowns identify stored amounts and captured friendly/enemy End independently of live aura eligibility.
 func modifier_breakdown(magical: bool = false) -> PackedStringArray:
 	var rows := PackedStringArray()
 	var axis := 1 if magical else 0
@@ -378,7 +380,7 @@ func modifier_breakdown(magical: bool = false) -> PackedStringArray:
 	if temporary != 0: rows.append("%+d temporary protection" % temporary)
 	for grant in timed_grants:
 		if grant != null and grant.kind == TimedGrant.Kind.MODIFIERS and grant.parameters.size() == 2 and grant.parameters[axis] != 0:
-			rows.append("%+d until End" % grant.parameters[axis])
+			rows.append("%+d until %sEnd" % [grant.parameters[axis], "your " if grant.expires_player == player else "enemy "])
 	if t_state == Enum.t_state.DEPLOYED and Match.get_unit(iun) == self:
 		var control := 0 if magical else ControlResolver.physical_bonus(self)
 		if control != 0: rows.append("%+d control" % control)

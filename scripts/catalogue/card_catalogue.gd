@@ -2,10 +2,10 @@
 class_name CardCatalogue
 extends RefCounted
 
-## Makes all 86 sprite-backed units available to both players, preserving older roster prefixes and original eight IDs.
+## Makes all 97 sprite-backed units available to both players, preserving older roster prefixes and original eight IDs.
 ## LocalMatchController passes the roster to Match.start_local_match; new cards append without changing earlier identities.
 ## Seven rat synergy cards append for both owners, preserving every existing starter ID; defaults/captured printed baselines are supplied by Match.
-## Keeps only PixelLab-supported entries; the current 86-per-owner order is unchanged, preserving saved IDs while excluding legacy portrait-only cards.
+## Filters unsupported legacy portrait-only cards and appends the approved frontier block after every existing ID.
 static func starter_army() -> Array[UnitInfo]:
 	var army: Array[UnitInfo] = []
 	army.append(squirrel_king(1))
@@ -56,6 +56,7 @@ static func starter_army() -> Array[UnitInfo]:
 	for player_id in [1, 2]: army.append_array(SynergyCatalogue.all_units(player_id))
 	for player_id in [1, 2]: army.append_array(AdventurerCatalogue.all_units(player_id))
 	for player_id in [1, 2]: army.append_array(HeroCatalogue.all_units(player_id))
+	for player_id in [1, 2]: army.append_array(FrontierCatalogue.all_units(player_id))
 	return army.filter(BoardCharacter.supports)
 
 ## Returns only PixelLab-backed definitions for playable/exported inventories; legacy factories remain available for rule references and focused fixtures.
@@ -118,6 +119,7 @@ static func all_units(player_id: int) -> Array[UnitInfo]:
 	units.append_array(SynergyCatalogue.all_units(player_id))
 	units.append_array(AdventurerCatalogue.all_units(player_id))
 	units.append_array(HeroCatalogue.all_units(player_id))
+	units.append_array(FrontierCatalogue.all_units(player_id))
 	return units.filter(BoardCharacter.supports)
 
 ## Creates a 2-health Starting mage with Fire 2/2 and a death-triggered unrestricted single-unit Reset; implicit Walk 1 is supplied at setup.

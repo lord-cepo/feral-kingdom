@@ -31,8 +31,10 @@ static func fallback_glyph(action: StringName) -> String:
 ## Die uses a tightly cropped UI copy of the PixelLab skull frame across event and consequence descriptions.
 ## Bash uses the cropped PixelLab crossed-weapons object, shared by rule text and glossary metadata.
 ## Unknown actions return an empty path, preserving the existing fallback vocabulary.
+## Upgrade uses a tight AtlasTexture region of the PixelLab arrow for descriptions and action buttons.
 static func action_path(action: StringName, owner: int = 1) -> String:
 	match action:
+		&"upgrade": return ROOT + "upgrade-inline.tres"
 		&"bash": return ROOT + "bash.png"
 		&"die": return ROOT + "skull.png"
 		&"push": return "res://assets/effects/push-icons/frame_0.png"
@@ -51,12 +53,14 @@ static func action_path(action: StringName, owner: int = 1) -> String:
 ## HexCell and EffectText call this for inline images; descriptions always show an unlit bomb, even for Light.
 ## Descriptions default to 32px; board rows request 48px so their pixel symbols stay legible at camera scale.
 ## Skull and Bash keep their original 32px source scale after cropping, removing padding without enlarging the visible glyph.
+## Upgrade's cropped 14x21 region uses a 36px baseline, giving a compact 12x19 inline arrow at the default size.
 ## Push/Pull frames normalize to the requested size; prepared UI art fits within 48px with a smaller heart; scale both dimensions together to preserve proportions and tight side gutters.
 static func bb(action: StringName, owner: int = 1, size: int = 32) -> String:
 	var path := action_path(action, owner)
 	if path.is_empty(): return ""
 	var icon: Texture2D = load(path)
 	var base_size := float(maxi(icon.get_width(), icon.get_height())) if action in [&"push", &"pull"] else (32.0 if action in [&"die", &"bash"] else 48.0)
+	if action == &"upgrade": base_size = 36.0
 	var width := roundi(icon.get_width() * float(size) / base_size)
 	var height := roundi(icon.get_height() * float(size) / base_size)
 	return "[img=%dx%d]%s[/img]" % [width, height, path]

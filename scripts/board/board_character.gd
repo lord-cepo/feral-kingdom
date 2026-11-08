@@ -19,7 +19,10 @@ const MAPPED_CARDS := ["squirrel-king", "pine-processionary", "thunder-toad", "w
 	"jerboa-scout", "dormouse-witch", "rat-warlock", "red-squirrel-druid", "porcupine-shaman",
 	"mouse-summoner", "chinchilla-alchemist", "guinea-pig-cleric", "marmot-monk", "lemming-healer",
 	"tamia-bard", "jerboa-jester", "rat-pirate", "beaver-blacksmith", "guinea-pig-merchant",
-	"grey-squirrel-king", "jerboa-king", "marmot-queen"]
+	"grey-squirrel-king", "jerboa-king", "marmot-queen",
+	"mole-shaman", "lemming-wizard", "mole-alchemist", "flying-squirrel-thief", "rat-hunter",
+	"guinea-pig-berserker", "mara-merchant", "beaver-engineer", "marmot-crossbowman",
+	"red-squirrel-paladin", "jerboa-pirate"]
 const CHARACTER_SHADER := preload("res://assets/shaders/board_character.gdshader")
 ## Immutable presentation assets are retained once per appearance, shared by both owners, Bash figures and travelling overlays.
 static var _art_cache: Dictionary = {}

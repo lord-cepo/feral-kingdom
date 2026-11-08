@@ -175,7 +175,7 @@ func test_grey_eligibility_and_expiry() -> void:
 ## The three Disable cards keep exact stats/names/portraits as the twenty newer adventurers append for both owners.
 func test_registration() -> void:
 	var roster := CardCatalogue.starter_army()
-	check(roster.size() == 172, "Both players have all 86 PixelLab units")
+	check(roster.size() == 194, "Both players have all 97 PixelLab units")
 	var cards: Array[UnitInfo] = [CardCatalogue.wild_mara(1), CardCatalogue.wild_tamia(1), CardCatalogue.wild_grey_squirrel(1)]
 	var lives := [2, 2, 1]
 	var regions := [[Enum.region.INTERMEDIATE], [Enum.region.STARTING], [Enum.region.STARTING, Enum.region.INTERMEDIATE]]

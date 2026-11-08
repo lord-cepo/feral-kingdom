@@ -1041,3 +1041,55 @@ The manifest/alignment include all 63 appearances. No generation was requested.
 The catalogue exporter now enumerates `CardCatalogue.all_units()` across both
 definition files; `unit-catalogue.html` includes all 80 implemented definitions.
 `army_menu.gd`: centered landing navigation eases upward on entry. Build shows catalogue, selected army, and hover rules in three columns. Toggle/load/size call `_refresh_selection`; either list calls `_inspect_unit`. Click a selected army row to remove it.
+
+Roster startup and inspection placement: `_build_side_drawer_button` now initializes
+both players open with full fade progress and calls `set_open(true)` for their
+arrow signs. Existing toggles still animate independently. `_layout_hover_panel`
+reserves the right roster width plus a margin, placing default hover info to its
+left; compact layouts place it above the bottom trays. Ctrl-drag placement remains
+user controlled. Example: launch Local game and both armies are visible immediately;
+hover a unit to inspect it beside the right roster rather than over its cards.
+
+Compact hex inspection: HexCell.refresh and _refresh_life_numbers use _life_row
+for current life plus signed physical, followed by /signed magical only when
+magical is positive (example: 5 +2/+1). _bash_stats_text shares that formatter.
+Maximum life and hearts remain available in the detailed inspection panel.
+Effects retain three summary rows, with the original 31px text, 36px action icons and the original 60px
+row struts. _add_bash_details places those rows directly under the single stat
+line. Player 2 stat text is pale cyan-blue (#8cdaff) over the dark outline to
+increase terrain contrast. This changes presentation only, not modifier rules.
+
+Hover typography: `_make_hover_unit_card` titles and `_refresh_hover_panel`
+detached counter text share `HOVER_TITLE_FONT_SIZE` (17px). Bomb, pending attack,
+Stun and named resource counter rows therefore use the same size as unit names.
+
+continuous_cues.gd collects active continuous rules and shows a static generated white/light-brown pixel circle (assets/ui/continuous-circle.png) beside the phase sign. There are no continuous markers on units. LocalMatchController polls the circle hover and lists current rules by source in the existing hover window. Eligibility comes from rules reads; no presentation state enters Match or network commands.
+
+serial_feedback.gd owns a cosmetic FIFO for positive-parameter Upgrade and resolved
+Shield/Mshield/Stun recipient clips. Board's finite presentation query excludes the
+FIFO itself; its phase query includes it. This avoids a queue waiting for itself.
+The upgrade icon and nine animation frames are the user's existing 32px PixelLab
+upgrade object (1d3948d0-a80f-43dd-9fb2-4a6daf23c526); GameIcons/EffectText share the
+static arrow, and board_trigger.gd plays the finite nine-frame clip. See SELECTION.md
+for caller map, observation boundaries, examples and the focused regression scene.
+
+Bomb sweep update: bomb_blast.gd retains only the lit origin through the pending
+response window. Its frozen-batch hook creates effective-neighbour copies, waits
+for radial travel, then retires each with its resolution. CombatResolver captures
+lighting-owner counterclockwise ring order (P1 southwest, P2 southeast), center last.
+The Board reads remaining_spread instead of measuring travel from ignition time.
+
+Lit Defuse restoration: CombatResolver.pending_lit_bomb exposes only public pending
+origin records to previews/commit. CannonAttack.bomb_owner/bomb_pierce retain inert
+metadata separately from lighting values and are persisted by MatchSnapshot.
+BombBlast uses resolved/defused outcomes to release the hidden origin exactly once
+and fade the lit overlay over the restored unlit marker without any radial copies.
+
+Continuous circle refinement: ContinuousCues uses a 22px icon at sign-local
+(44, 113), inside the left of the phase board; its hover lists source names in
+their player's phase-sign color. The original generated asset is unchanged.
+
+Frontier cards use `scripts/catalogue/frontier_catalogue.gd` for reusable
+definitions and selectors. [FRONTIER_UNITS.md](FRONTIER_UNITS.md) maps those
+definitions to trigger capture, payments, movement, deployment, snapshots,
+and their dedicated regression scene.

@@ -1,10 +1,10 @@
 class_name Verbs
 extends RefCounted
 
-## Movement-trigger support grants one recipient a pair of modifiers through the captured current End cleanup.
-static func grant_modifiers(physical: int, magical: int) -> Effect.Verb:
+## Grants recipient modifiers through End; the paid Berserker command requests separate stacking grants through enemy End.
+static func grant_modifiers(physical: int, magical: int, enemy_end: bool = false, stack: bool = false) -> Effect.Verb:
 	return Effect.Verb.new(&"grant_modifiers", Action.grant_modifiers, Action.can_grant_modifiers,
-		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [physical, magical])
+		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [physical, magical, enemy_end, stack])
 
 ## Sacrifice is an atomic UNIT cost; the author supplies explicit eligibility and the shared cost ledger prevents duplicate payment.
 static func sacrifice() -> Effect.Verb:
@@ -219,8 +219,9 @@ static func pull_bomb(distance: int, range: int, action_free: bool = false) -> E
 	return Effect.Verb.new(&"pull_bomb", Action.displace_bomb, Action.can_displace_bomb,
 		TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [distance, range, true, action_free])
 
-static func shield(amount: int) -> Effect.Verb:
-	return Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false])
+## Standard Shield protects friends; Paladin supplies an explicit enemy-hero exception for its second phrase.
+static func shield(amount: int, enemy_hero: bool = false) -> Effect.Verb:
+	return Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false, enemy_hero])
 
 static func mshield(amount: int) -> Effect.Verb:
 	return Effect.Verb.new(&"mshield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, true])

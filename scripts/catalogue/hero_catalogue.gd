@@ -48,7 +48,7 @@ class Loaded extends Condition:
 		var unit := Match.get_unit(ctx.recipient.id)
 		return unit != null and unit._counter_value(UnitInfo.PROJECTILE_COUNTER) > 0
 
-## Khan retains Push/Stun and grants every friendly normal Move actor +2 physical through End, once per source/recipient/turn.
+## King retains Push/Stun; each shifted friend has +2 physical until the source enemy End, refreshed per recipient.
 static func jerboa_king(owner: int) -> UnitInfo:
 	var unit := hero(owner, "jerboa-king", "Jerboa King", 6, 2)
 	var enemies := QuerySelector.new()
@@ -56,9 +56,9 @@ static func jerboa_king(owner: int) -> UnitInfo:
 	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.push(1, 2),
 		Selectors.UnitsOn.new(DistanceSelector.within(2)).where(enemies))))
 	unit.effects.append(Collection.stun_DR(1, 1))
-	var moved := Effect.EventPhrase.observe(&"move", SynergyRules.friendly_actors(), QuerySelector.new(TargetRef.Kind.HEX),
+	var shifted := Effect.EventPhrase.observe(&"shifted", SynergyRules.friendly_actors(), QuerySelector.new(TargetRef.Kind.HEX),
 		TargetRef.Kind.UNIT, TargetRef.Kind.HEX)
-	unit.trigger_effects.append(Effect.on_event(moved, SynergyRules.phrase(Verbs.grant_modifiers(2, 0),
+	unit.trigger_effects.append(Effect.on_event(shifted, SynergyRules.phrase(Verbs.grant_modifiers(2, 0, true),
 		Selectors.Reference.new(Selectors.Anchor.EVENT_SUBJECT), true)))
 	return unit
 

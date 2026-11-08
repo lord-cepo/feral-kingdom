@@ -97,3 +97,15 @@ Either seat can leave. Only host can end. Guest leave before start releases its 
 `protocol_mismatch`, `version_mismatch`, `invalid_rules_hash`, `invalid_session`, `hello_required`, `room_unavailable`, `already_in_room`, `not_in_room`, `invalid_settings`, `invalid_army`, `host_only`, `not_ready`, `already_started`, `not_started`, `forbidden_channel`, `peer_disconnected`, `invalid_sequence`, `sequence_mismatch`, `message_too_large`, `rate_limited`, `capacity`.
 
 Errors do not automatically consume a relay sequence. Binary/oversize frames, rate-limit violations and replaced-connection commands close the offending socket. No game costs are paid by the relay.
+
+## Normal-play payloads
+
+NetworkSession.request_intent sends explicit gameplay choices, not hover or
+highlight updates. _authorize publishes accepted intents with a compact SHA-256
+_signature digest instead of candidate identities. _process keeps settled
+checkpoints locally; _send_bootstrap transmits them on initial load or sync.
+For example, deployment sends the chosen unit/hex and its acceptance without a
+full board checkpoint afterward. Multi-step effects still replicate initiation
+and each explicit choice so both rules runners reach the next stage. Receipts,
+context updates and trigger acknowledgements remain separate messages.
+Both clients must use the same build after the digest representation changes.

@@ -2,8 +2,9 @@
 
 Implemented 2026-10-30 to reduce startup resource loading and editor imports.
 
-`assets/characters/sheets/` contains **one transparent PNG per character**:
-83 sheets, 7,101 logical source frames and 6,547 distinct packed rectangles.
+`assets/characters/sheets/` contains **one transparent PNG per character**.
+The original conversion covered 83 sheets, 7,101 logical source frames and
+6,547 distinct packed rectangles.
 Identical frames within one character share space. Total PNG size is 13,488,607
 bytes, versus 19,031,307 bytes for the separate source PNGs. Largest sheet side
 is 960 pixels. Packing preserves original pixels, canvas dimensions, directions,
@@ -14,6 +15,41 @@ PNG. `manifest.json` records the original frame names, sheet rectangles, origina
 alpha bounds/feet, clip counts, sheet sizes and source hashes. Rectangles are
 compactly packed rather than arranged as animation rows; use the named manifest
 entries to extract a particular clip or frame.
+
+## Creating a character in PixelLab
+
+1. **Choose the character.** Pick a name from [CHARACTER_TYPES.md](CHARACTER_TYPES.md).
+2. **Use an existing roster sprite as the style reference.** Pick a character
+   with a similar build and give PixelLab its south-facing standing sprite as
+   an image reference. Use the low top-down view and match the reference's
+   palette, shading, outline, level of realism, body proportions and apparent
+   scale. Change the species, clothing and equipment as the new design needs.
+3. **Generate and review one south-facing standing preview.** Both the face
+   and torso must point straight south, toward the viewer. Check the muzzle,
+   eyes, shoulders and chest for any three-quarter turn. Compare the preview
+   with the reference side by side at native size. Regenerate if the facing or
+   style drifts. Get approval on the preview before making the other views.
+4. **Generate the remaining standing views.** Use the approved south sprite
+   as the source for PixelLab's eight-direction generation. Keep the approved
+   south frame and check that the other directions preserve the design.
+5. **Generate the south-facing action.** Have the character use its tools or
+   equipment, or perform a motion that expresses what makes it distinctive.
+   Keep the face and torso oriented south throughout the clip.
+6. **Make the eight-direction walk cycle.** Generate N, NE, E, SE and S. Create
+   NW, W and SW by horizontally flipping the NE, E and SE frames by hand,
+   respectively. Keep the frame order and timing of each source cycle.
+7. **Generate the sit-down animation.** Check that it starts from the standing
+   pose and ends in a stable seated pose.
+8. **Review each clip before exporting.** Play it at speed and step through it
+   frame by frame. Check that tools, equipment and other visible objects stay
+   attached or move continuously, without disappearing or jumping between
+   frames. Check the last-to-first transition on walk loops too. Regenerate
+   the affected clip and review it again until the transitions are clean.
+9. **Build the spritesheet.** Export the approved frames as transparent PNGs
+   under `assets/characters/playground/<character>`, following an existing
+   character's folder layout and frame naming. Run
+   `python tools/build_character_alignment.py` to rebuild the alignment data
+   and pack the runtime sheet using the same pipeline as the other characters.
 
 ## Source editing and rebuilding
 
@@ -39,7 +75,8 @@ loads one PNG per supported character. `_cached_frame` creates lightweight
 AtlasTexture views and indexes baked bounds/feet by texture identity.
 `_cached_cycle` restores authored frame order independent of physical packing.
 Both owners, stationary figures and travelling overlays reuse those same packs.
-This replaces 6,412 individual board-animation texture loads with 83 shared PNGs.
+The original conversion replaced 6,412 individual board-animation texture loads
+with 83 shared PNGs. The current roster adds 14 more packed character PNGs.
 
 `SideUnitPortrait._load_art` reuses the pack's seated/standing/rise views and
 baked bounds. It no longer loads individual frame files or reads images back
@@ -55,7 +92,9 @@ barriers retain their existing behavior.
 `CardCatalogue.starter_army/all_units` return only PixelLab-supported cards.
 `BoardCharacter.card_art_path/portrait_path` return sheet-backed portraits only;
 legacy `assets/cards` fallback loading is removed. Current playable roster order
-remains 83 unit types per player, preserving existing stable IDs.
+contains 97 unit types per player, with the eleven frontier entries appended
+after all existing stable IDs. Their reviewed source frames are in the
+PixelLab character export. See [FRONTIER_UNITS.md](FRONTIER_UNITS.md).
 
 ## Ignored resources
 

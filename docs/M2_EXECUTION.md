@@ -269,7 +269,7 @@ side effects, spells and exile have not been assigned new rules.
 | --- | --- | --- |
 | LocalMatchController | `RulesRunner.submit` | Submit one player command. |
 | Match/CombatResolver | `begin_boundary` / `end_boundary` | Finish a mutation before releasing followups. |
-| Match.action_event | `capture_event` | Snapshot all matching definitions once per occurrence. |
+| Match.action_event | `capture_event` | Snapshot all matching definitions once per occurrence. Reserve any turn-limited trigger before enqueueing it. |
 | RulesRunner | `execution_started` -> Board.observe_execution | Attach or restore choice UI. |
 | EffectExecution | `after_cost` | Release cost followups before resuming consequences. |
 | Board controls | `confirm`, phrase `choose`, execution `cancel` | Resume retained work with current legality. |

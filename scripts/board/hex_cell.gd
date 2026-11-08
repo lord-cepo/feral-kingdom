@@ -22,6 +22,7 @@ const BOMB_ICON := "res://assets/icons/board/bomb-unlit.png"
 ## Normal Bomb placement/travel and historical replays share the same target-relative endpoint.
 const BOMB_OFFSET: Vector2 = preload("res://scripts/board/board_fire.gd").TARGET_OFFSETS[&"bomb_throw"]
 const INFO_FONT_SIZE := 31
+const EFFECT_FONT_SIZE := INFO_FONT_SIZE
 const INFO_ROW_SPACER := "[img=1x60]res://assets/icons/ui/info-row-spacer.png[/img]"
 @onready var frame := $HexFrame
 @onready var unit_figures: Node2D = $UnitFigures
@@ -183,7 +184,7 @@ func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	bash_hover_side = -1
 	displayed_life_rows.clear()
 	var life_lines: PackedStringArray = []
-	var modifier_lines: PackedStringArray = []
+
 	var effect_lines: PackedStringArray = []
 	if bash != null:
 		_render_bash(bash)
@@ -193,23 +194,16 @@ func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	var remaining_effect_rows := 3
 	for index in units.size():
 		var unit := units[index]
-		var owner_color := "#ef4444" if unit.player == 1 else "#3b82f6"
+		var owner_color := "#ef4444" if unit.player == 1 else "#8cdaff"
 		var life_line := _life_row(unit, owner_color)
 		displayed_life_rows[unit.iun] = life_line
 		life_lines.append(life_line)
-		var physical_text := ("+" if unit.physical_modifier >= 0 else "") + str(unit.physical_modifier)
-		var modifier_line := "[font_size=%d][color=%s]%s[/color]" % [INFO_FONT_SIZE, owner_color, physical_text]
-		if unit.magical_modifier != 0:
-			var magical_text := ("+" if unit.magical_modifier > 0 else "") + str(unit.magical_modifier)
-			modifier_line += "[color=#c084fc]%s[/color]" % magical_text
-		modifier_lines.append(modifier_line + "[/font_size]")
 		var summary := _compact_effect_summary(unit, remaining_effect_rows)
 		if not summary.is_empty():
-			effect_lines.append("[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [INFO_FONT_SIZE, summary])
+			effect_lines.append("[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [EFFECT_FONT_SIZE, summary])
 			remaining_effect_rows -= summary.count("\n") + 1
 		_add_unit_figure(unit, index, units.size(), unit.iun == selected_unit_id)
 	var contents := life_lines
-	contents.append_array(modifier_lines)
 	contents.append_array(effect_lines)
 	$CoordinateLabel.text = _fixed_info_rows("\n".join(contents))
 	for unit in units: last_unit_info[unit.iun] = $CoordinateLabel.text
@@ -467,7 +461,7 @@ func _action_sticker_markers(phrase: Effect.ConsequencePhrase) -> String:
 ## Returns enlarged 48px PixelLab inline icons for authored actions, retaining other existing glyphs.
 ## _compact_effect_label() calls this for authored board actions.
 func _action_icon(action: StringName, owner: int = 1) -> String:
-	var icon := GameIcons.bb(action, owner, 48)
+	var icon := GameIcons.bb(action, owner, 36)
 	if not icon.is_empty(): return icon
 	return GameIcons.fallback_glyph(action)
 
@@ -648,10 +642,13 @@ func _add_bash_stats(unit: UnitInfo, side: int) -> void:
 	add_child(stat)
 	bash_overlays.append(stat)
 
-## Board supplies Slash-timed values and one-second heart pulses after either life value increases; ordinary rows retain owner colors.
+## Refresh and Bash inspection share one row: Slash-timed current life, signed physical and positive magic after a slash.
 func _life_row(unit: UnitInfo, color: String) -> String:
 	var owner_board := get_parent().get_parent() as GuerraBoard
-	return "[color=%s]%s %s %s[/color]" % [color, owner_board.life_number(unit), owner_board.life_heart(unit), owner_board.life_number(unit, true)]
+	var row := "[color=%s]%s %+d[/color]" % [color, owner_board.life_number(unit), unit.physical_modifier]
+	if unit.magical_modifier > 0:
+		row += "[color=#deb4ff]/%+d[/color]" % unit.magical_modifier
+	return row
 
 ## Godot's cell process updates only life text, preserving portrait/selection/hover animations and avoiding a full repaint for each pulse frame.
 func _refresh_life_numbers() -> void:
@@ -659,7 +656,7 @@ func _refresh_life_numbers() -> void:
 	for id in displayed_life_rows:
 		var unit := Match.get_unit(id)
 		if unit == null: continue
-		var next := _life_row(unit, "#ef4444" if unit.player == 1 else "#3b82f6")
+		var next := _life_row(unit, "#ef4444" if unit.player == 1 else "#8cdaff")
 		if next != displayed_life_rows[id]:
 			$CoordinateLabel.text = $CoordinateLabel.text.replace(displayed_life_rows[id], next)
 			displayed_life_rows[id] = next
@@ -668,18 +665,12 @@ func _refresh_life_numbers() -> void:
 			var unit := Match.get_unit(int(overlay.get_meta("unit_id", -1)))
 			if unit != null: overlay.text = _bash_stats_text(unit)
 
-## Formats signed physical and optional purple magic as one centered row below actual life, as in Guerra JS.
+## Bash stat creation and live updates center the same compact single stat row used by ordinary hexes.
 ## _add_bash_stats() and _update_bash_info() share owner-colored hearts and the same fixed row metrics as ordinary hex info.
 ## Current life precedes the heart, matching ordinary rows; Board.life_number holds and pulses it on the Slash beat.
 ## Board.life_heart shares the same one-second gain pulse for either participant's actual or maximum life increase.
 func _bash_stats_text(unit: UnitInfo) -> String:
-	var owner_color := "#ef7770" if unit.player == 1 else "#6da9ee"
-	var modifier := "[color=%s]%+d[/color]" % [owner_color, unit.physical_modifier]
-	if unit.magical_modifier != 0:
-		modifier += "[color=#c084fc]%+d[/color]" % unit.magical_modifier
-	var owner_board := get_parent().get_parent() as GuerraBoard
-	var rows := "[color=%s]%s %s[/color]\n%s" % [owner_color, owner_board.life_number(unit), owner_board.life_heart(unit), modifier]
-	return "[center]%s[/center]" % _fixed_info_rows(rows)
+	return "[center]%s[/center]" % _fixed_info_rows(_life_row(unit, "#ef7770" if unit.player == 1 else "#8cdaff"))
 
 ## Adds the usual three compact hex-info rows for one Bash side, hidden until its portrait is hovered.
 ## _render_bash() creates it for each participant and _animate_bash_focus() fades in only the focused card's rows.
@@ -699,7 +690,7 @@ func _add_bash_details(unit: UnitInfo, side: int) -> void:
 	details.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	details.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	details.size = Vector2(240, 140)
-	details.position = Vector2(-120, -36)
+	details.position = Vector2(-120, -62)
 	if BoardCharacter.supports(unit) and not bash_slider_enabled:
 		details.size.x = 120
 		details.position.x = -120 if side == 0 else 0
@@ -717,7 +708,7 @@ func _add_bash_details(unit: UnitInfo, side: int) -> void:
 	add_child(details)
 	bash_overlays.append(details)
 
-## Formats up to three status/action rows beneath the separate Bash life/modifier label, without blank-row padding.
+## Formats up to three status/action rows beneath the single Bash stat row, without blank-row padding.
 ## _add_bash_details() and _update_bash_info() use this text; the dedicated label fixes its vertical placement.
 ## Stun counter rows are omitted here; the same transparent strut keeps action spacing identical to ordinary hex info.
 func _bash_card_details(unit: UnitInfo) -> String:
@@ -726,7 +717,7 @@ func _bash_card_details(unit: UnitInfo) -> String:
 	var actions := _compact_effect_summary(unit, remaining_rows)
 	if not actions.is_empty(): rows.append_array(actions.split("\n"))
 	if rows.size() > 3: rows = rows.slice(0, 3)
-	return "[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [INFO_FONT_SIZE, _fixed_info_rows("\n".join(rows))]
+	return "[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [EFFECT_FONT_SIZE, _fixed_info_rows("\n".join(rows))]
 
 ## Animates one hovered Bash side into Guerra's full-card reveal and restores the compact split on exit.
 ## Red owns the left pointer half and blue the right; each change crossfades directly over the normal 0.18s hover duration.

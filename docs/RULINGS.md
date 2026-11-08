@@ -274,9 +274,7 @@ Grey Squirrel King's Supply creates one Projectile on an adjacent friend of any
 unit type without granting an attack. Its +1 physical aura reads current ammunition
 and disappears when the final Projectile is spent. Friends include heroes/temples.
 Jerboa King's enemy-only Push follows normal displacement legality; its revised
-Move support grants the exact friendly mover +2/+0 through the current End cleanup.
-Repeated Move refreshes the same grant; Push/Pull/Fly do not trigger it. Grants
-survive source departure and are saved as typed recipient-bound timed contributions.
+Shifted support grants the exact displaced friend +2/+0 until the king's enemy End. Shifted means a successful forced position change, currently Push/Pull; Walk/Fly, deployment, Return and failed displacement do not trigger it. Repeated shifts refresh the same source/recipient grant. Own-turn awards survive own End and expire after the next enemy End followups; enemy-turn awards expire after that enemy End. Grants survive source departure and persist as typed recipient-bound timed contributions.
 Marmot Queen's free sacrifice reward reads the friendly victim's captured departure
 hex within two, excludes SELF, and does not trigger on ordinary Die. Shield/Mshield
 are consumed temporary counters. Her healing excludes SELF; her wounded-source
@@ -322,3 +320,41 @@ Region membership correction (2026-10-20): the left intermediate triangle is six
 Bomb 2 on the movement event's captured former hex, regardless of region. It no
 longer chooses an arbitrary Starting hex. This uses historical origin data,
 without changing ordinary Bomb placement/merging or detonation rules.
+
+Marmot Berserker's printed Walk onto an enemy within two costs [S]: deactivate
+and add one self-Stun, without spending a player action. Normal movement and
+enemy-destination restrictions remain; its separate Shield action still costs [AS].
+
+Bomb presentation/order revision (2026-11-06): lighting retains one lit origin
+until the response window. Spread begins when the Cannon/Bomb batch is frozen,
+before its first resolution callback. Copies use then-current contact eligibility
+or chain-bomb presence; they are presentation only. The lighting owner determines
+the ring start (P1 southwest, P2 southeast), not the thrower's owner/source position.
+The sweep is counterclockwise, center last, and preserves silent area resolutions.
+
+Lit Defuse ruling (2026-11-06): during the pending response window, Defuse at the
+lit origin restores the original unlit bomb and retires every queued area record
+without contact, damage, explosion or chain events. It preserves the bomb's stored
+damage, Pierce, original owner and source; these differ from the lighting attack's
+owner/Pierce. Normal Defuse ownership/range/activity rules still apply. Neighbour
+blast hexes and frozen/resolving batches cannot be defused. Defuse of an already
+unlit bomb still removes it. If another inert bomb has since been placed at the
+origin, restoration merges using ordinary same-hex damage/Pierce rules.
+
+## FK-14 — Frontier trigger, movement and deployment interactions
+
+- Reserve Lemming Wizard's turn at capture. Only a positive Ember award on a
+  different friendly deployed unit qualifies.
+- Mole Alchemist reads the actual life immediately before the paid Sacrifice.
+  Flying Squirrel Thief reads the captured +1/+1 change and grants deployment
+  before resolving Revive, even if no card can be revived.
+- Rat Hunter checks positive stored Projectiles at attack declaration and may
+  only retreat one adjacent step strictly farther from that attacker.
+- Guinea Pig Berserker earns Soul on its own Bash declaration and retains the
+  paid X through the Walk and modifier grant. The latter expires at enemy End.
+- Mara Merchant allows enemy control, never neutral control. Red Squirrel
+  Paladin's second Shield explicitly permits only the opposing deployed hero.
+- Jerboa Pirate's Walk requires a reachable Bash destination when one exists.
+  The live bonus changes only other friends' Walk range.
+
+See [Frontier units](FRONTIER_UNITS.md) for the caller map and card examples.

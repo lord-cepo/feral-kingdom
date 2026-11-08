@@ -140,7 +140,7 @@ has already been paid.
 Timed records now distinguish action values from physical/magical modifier pairs.
 `Verbs.grant_modifiers(2, 0)` attaches a recipient-bound +2/+0 through the captured
 current End cleanup; UnitInfo derives it without counter mutation, and snapshots
-retain its kind. Jerboa King's Move support refreshes identical same-source grants.
+retain its kind. Jerboa King's Shifted support uses `Verbs.grant_modifiers(2, 0, true)` to capture enemy End instead; identical same-source grants refresh.
 See [HERO_UNITS.md](HERO_UNITS.md) and [HOVER_TEXT.md](HOVER_TEXT.md) for current
 callers, examples, general description rules and the distinct purple Mshield asset.
 
@@ -225,7 +225,7 @@ independently; only the timed grant expires automatically.
 | `Verbs.gore` / `push` / `pull` / `push_bomb` / `pull_bomb` → `Action` → `CombatResolver` | Phrase commit captures Gore's path hits, displaces a unit/Bomb along an axial line, and creates Bash on enemy landings. |
 | `CombatResolver.resolve_window(defender)` | `Match.complete_action()` calls it at Combat-resolve; queued Bow/Gore, Cannon/Bomb, Fire, then eligible Bash resolve in order. |
 | `Match.defeat(unit)` | Lethal Fire calls it; stable army entry remains while the unit loses its live hex. |
-| `Match.action_event` → `RulesRunner.capture_event()` | Match connects this once; the runner de-duplicates occurrences, orders matching `trigger_effects`, and drains supported cost-free ALL consequences after each event. |
+| `Match.action_event` → `RulesRunner.capture_event()` | Match connects this once. The runner de-duplicates occurrences, reserves any limited trigger's turn, and orders matching `trigger_effects` for execution. |
 | `UnitInfo.state_modifiers()` → `StateModifier.evaluate()` → `Condition.test()` | Modifier getters call this read-only path; attached contributions change effective stats without counter writes. |
 | `UnitInfo.state_modifiers()` → deployed source `ContinuousEffect.evaluate()` → `TargetResolver` / `Condition` | Effective modifier reads scan deployed aura sources and test each current recipient; the War Temple factory uses this path during Bash. |
 
@@ -1334,3 +1334,85 @@ while excluding misses/immunity. Bomb continues to use its separate bomb_hit.
 Focused scene: `godot --headless --path . res://tests/synergy_units_test.tscn`.
 Only execute behavioral scenes when the user's prompt ends in `TEST`.
 
+
+### Live continuous presentation
+
+GuerraBoard._ready installs continuous_cues.gd. Match.state_changed calls its
+refresh observer, which reads StateModifier conditions and ContinuousEffect.applies_to
+for current deployed recipients. A static white/light-brown pixel circle with a
+black outline sits beside the phase sign; no continuous markers appear on units.
+The circle fades when there are no eligible continuous rules. It does not blink,
+require acknowledgement, accept dismissal or block phase progress. Yellow trigger
+gates remain independent. LocalMatchController._process polls hovered_text for
+the circle and _show_continuous_hover lists active rules grouped by source.
+For example, loading a friend beside Grey Squirrel King includes his rule in the
+circle's hover text; spending the final Projectile removes that entry unless
+another loaded adjacent recipient remains.
+HeroCatalogue.jerboa_king observes Shifted. CombatResolver._apply_displace emits
+Shifted once after a successful Push/Pull with the displaced unit as EVENT_SUBJECT
+and its destination HEX as EVENT_TARGET. Verbs.grant_modifiers(2, 0, true) captures
+source enemy End in a TimedGrant. Existing cleanup/snapshot paths retain the boundary.
+See tests/hero_units_test.tscn for the focused regression scene (run only on TEST).
+
+### Positive-parameter upgrade feedback
+
+`GuerraBoard._ready` installs `serial_feedback.gd` after its presentation listeners.
+`Match.state_changed` and `Match.action_event` call the observer: it compares live
+current/max life, physical/magical modifiers and bound/effective numeric action
+parameters against the same deployed unit's previous values. One notification
+with any positive delta queues one recipient-bound upgrade; repeated notification,
+zero/decrease, initial deployment and fast replay do not queue upgrades. Chosen
+ability upgrades and continuous/timed action values use existing read-only getters.
+The observer never mutates game values or emits gameplay events.
+
+`_show_target_feedback` queues Shield/Mshield/Stun rather than playing them directly.
+SerialFeedback drains one clip at a time after `_finite_presentation_busy` clears:
+attack travel, movement, Slash/Skull, heart pulses, displacement and sign entrances
+finish first. `_phase_presentation_busy` includes pending/active recipient clips,
+so phase and trigger presentation cannot release ahead of them. Persistent sleeping,
+trigger and ambience loops are excluded. Invalid/off-board/replaced recipients are
+skipped. Existing combat-owned attack-to-damage sequences keep their own timing.
+For example, a Bow damage/range grant queues one nine-frame upgrade on the recipient;
+a Shield sequence plays each recipient's finite feedback in order.
+
+EffectText._steps/_phrase render the shared GameIcons upgrade arrow in place of the
+word Upgrade. `assets/icons/ui/upgrade.png` and `assets/effects/upgrade/frame_0..8.png`
+are native pixels from owned PixelLab object `1d3948d0-a80f-43dd-9fb2-4a6daf23c526`,
+animation group `6da88bb6-0985-4b31-9c99-5fd763510922`. No new generation was used.
+Focused observer regressions: `tests/upgrade_feedback_test.tscn`; run only on TEST.
+
+### Bomb origin, spread and sweep
+
+CombatResolver._apply_ignite_bomb uses bomb_blast_coordinates to capture a
+lighting-owner counterclockwise ring (P1 southwest, P2 southeast), then center.
+RulesRunner keeps the existing per-Cannon/Bomb continuation and trigger waits.
+GuerraBoard._present_bomb_blast creates bomb_blast.gd's lit origin overlay; it no
+longer creates neighbour copies at lighting. When the frozen batch removes its
+records from Match.pending_cannon_attacks, _prepare_spread captures effective
+neighbours via CombatResolver.bomb_blast_effective. Contacts include zero damage;
+immune-only and empty neighbours get no copy, while chain bombs do. Rules still
+resolve every captured playable area hex against its current occupants.
+Board's finite feedback query waits for the 650ms spread before resolving the first
+hex; remaining_spread feeds explosion/damage delay calculations. Resolved effective
+bomb_explosion events create bomb_explosion.gd, then the existing damage sequence
+plays Slash and possible Skull before the next queued hex. Original/replica art
+hands off to its own resolved explosion. See tests/fire_test.tscn, test_bomb_sweep
+for owner/order, unchanged area and effective-copy eligibility (run only on TEST).
+
+Lit Defuse: can_defuse_bomb and _apply_defuse_bomb share pending_lit_bomb(origin),
+which accepts only unresolved public blast records for the exact origin. Commit
+restores the captured inert bomb, marks its records resolved/defused and removes
+them from the pending queue. CannonAttack now retains bomb_owner/bomb_pierce;
+MatchSnapshot captures/restores these separately from lighting owner/Pierce.
+Older snapshots default those absent fields to the captured blast values.
+BombBlast recognizes the defused outcome, suppresses spread, and crossfades the
+lit origin over the restored ordinary unlit marker via _release_origin.
+Example: light a stored piercing Bomb 3 with non-piercing enemy Fire, then Defuse:
+the blast disappears and the original owner's piercing Bomb 3 remains unlit.
+Focused regression: fire_test.gd::test_lit_bomb_defuse (run only on TEST).
+
+Continuous indicator layout: ContinuousCues._process now sizes the circle to 22px
+(including asset margin), half its earlier size, at phase-sign local (44, 113)
+inside the board left of the caption. hovered_text uses the sprite transform so
+its hitbox follows that placement/scale. refresh colors each source-unit name
+with phase-sign player colors: P1 #ef7770, P2 #6da9ee. Rule text remains unchanged.

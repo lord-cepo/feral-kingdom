@@ -1,5 +1,6 @@
 """Validate exported release files and assemble the portable Windows ZIP without running gameplay tests."""
 import hashlib
+import argparse
 import json
 import re
 import shutil
@@ -7,10 +8,23 @@ import struct
 import subprocess
 import zipfile
 from pathlib import Path
+from generate_network_fingerprint import GAME_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'exports/windows'
-VERSION = '0.1.0'
+VERSION = GAME_VERSION
+
+
+def source_commit():
+    """Identify the immutable source snapshot used for a packaged build."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--source-commit')
+    args = parser.parse_args()
+    if args.source_commit:
+        if not re.fullmatch(r'[a-f0-9]{40}', args.source_commit):
+            parser.error('--source-commit must be a full Git commit ID')
+        return args.source_commit
+    return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 
 
 def validate_pack(path):
@@ -57,18 +71,16 @@ def main():
     templates = ROOT / '.tools/godot/appdata/Godot/export_templates/4.7.2.stable'
     shutil.copy2(templates / 'icudt_godot.dat', OUTPUT / 'icudt_godot.dat')
     (OUTPUT / 'README.txt').write_text(
-        'FERAL KINGDOM - Windows playtest v0.1.0\n\n'
+        f'FERAL KINGDOM - Windows playtest v{VERSION}\n\n'
         'Extract this entire ZIP, then double-click FeralKingdom.exe.\n'
         'Keep FeralKingdom.pck and icudt_godot.dat beside the executable.\n'
         'Godot does not need to be installed.\n\n'
         'Build and save an army with exactly one hero. One player chooses Host;\n'
-        'the other chooses Find. Choose your deck and create or join a room;\n'
-        'the match starts automatically. Both players need the same release.\n'
+        'the other chooses Find. Select matching army sizes and choose Ready,\n'
+        'then the host starts the match. Both players need the same release.\n'
         'Internet is required for multiplayer; the relay is already configured.\n\n'
-        'Development playtest: automated network, local match, presentation,\n'
-        'selection, combat and relay checks passed. A full two-device\n'
-        'multiplayer/reconnect session remains to be verified.\n\n'
-        'Updates and issue reports: https://github.com/lord-cepo/feral-kingdom\n', encoding='utf-8')
+        'For automatic Windows updates, use FeralKingdomLauncher.exe from Releases.\n'
+        'Releases: https://github.com/lord-cepo/feral-kingdom/releases\n', encoding='utf-8')
     notices = OUTPUT / 'LICENSES'
     notices.mkdir(exist_ok=True)
     shutil.copytree(ROOT / 'licenses/godot', notices / 'Godot', dirs_exist_ok=True)
@@ -77,7 +89,7 @@ def main():
     shutil.copy2(ROOT / 'assets/environment/windy-leaves/CREDITS.md', notices / 'WindyLeaves.md')
     shutil.copy2(ROOT / 'assets/icons/SOURCES.md', notices / 'PixelLab-provenance.md')
     build = (ROOT / 'scripts/network/network_build.gd').read_text(encoding='utf-8')
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    commit = source_commit()
     identity = {'version': VERSION, 'platform': 'windows-x86_64', 'godot': '4.7.2', 'source_commit': commit,
                 'rules_hash': re.search(r'RULES_HASH := "([a-f0-9]+)"', build)[1], 'pack_files': count}
     (OUTPUT / 'BUILD.json').write_text(json.dumps(identity, indent=2) + '\n', encoding='utf-8')
