@@ -4,6 +4,8 @@ A turn-based strategy game made with Godot. This repository contains the client,
 game rules and the artwork needed to play. Multiplayer uses the existing
 Cloudflare relay; players do not need to run a server or forward ports.
 
+![Feral Kingdom gameplay showcase](docs/showcase.gif)
+
 ## Download and play on Windows
 
 Download the **Windows ZIP** from [GitHub Releases](https://github.com/lord-cepo/feral-kingdom/releases/tag/v0.1.0).
