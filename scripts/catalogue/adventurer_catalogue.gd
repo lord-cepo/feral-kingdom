@@ -41,10 +41,10 @@ static func guinea_pig_cleric(owner: int) -> UnitInfo:
 		SynergyRules.phrase(Verbs.reset_unit(), QuerySelector.new())))
 	return unit
 
-## Berserker may Walk only onto an enemy within two; self-Shield remains an independent ordinary action.
+## Berserker's [S] Walk pays self-Stun one without a player action and only lands on an enemy within two; Shield retains [AS].
 static func marmot_berserker(owner: int) -> UnitInfo:
 	var unit := SynergyCatalogue.card(owner, "marmot-berserker", "Marmot Berserker", 4, [Enum.region.STARTING])
-	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.movement(2), AdventurerRules.EnemyDestinations.new())))
+	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.movement(2, false, true), AdventurerRules.EnemyDestinations.new()), 1, false))
 	unit.effects.append(SynergyCatalogue.shield(2, 0))
 	return unit
 

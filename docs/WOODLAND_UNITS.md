@@ -37,7 +37,9 @@ ability; changing a name changes group eligibility immediately.
   captures only positive maximum growth as Bow damage. Both use the original event
   amounts even if choices or other effects change health later.
 - `[AC]` bundles the written life/Soul payment with normal self-Stun and one
-  player action. Full affordability is checked before any payment. Paying the
+  player action. Doctor, Sorcerer and Guinea Pig collect their fixed self payments
+  automatically. Doctor and Sorcerer still require a friendly recipient choice.
+  Full affordability is checked before any payment. Paying the
   final life is allowed; the payer is defeated, death followups resolve, and the
   already-paid consequence continues using its stable source identity. Health
   changes to a defeated unit never implicitly Revive it. A zero-maximum casualty

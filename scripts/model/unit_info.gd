@@ -21,8 +21,11 @@ var control_bonus: int = 0
 var deploy_regions: Array[int] = [Enum.region.STARTING, Enum.region.INTERMEDIATE, Enum.region.FRONT]
 const PHYSICAL_COUNTER: StringName = &"physical"
 const MAGICAL_COUNTER: StringName = &"magical"
-const TEMP_PHYSICAL_COUNTER: StringName = &"temp_physical"
-const TEMP_MAGICAL_COUNTER: StringName = &"temp_magical"
+## Card rules call these Shield and Mshield; retain the property keys used by saved matches and old card objects.
+const SHIELD_COUNTER: StringName = &"temp_physical"
+const MSHIELD_COUNTER: StringName = &"temp_magical"
+const TEMP_PHYSICAL_COUNTER: StringName = SHIELD_COUNTER
+const TEMP_MAGICAL_COUNTER: StringName = MSHIELD_COUNTER
 const STUN_COUNTER: StringName = &"stun"
 const BOW_DAMAGE_COUNTER: StringName = &"bow_damage"
 const BOW_RANGE_COUNTER: StringName = &"bow_range"
@@ -36,7 +39,7 @@ var state_effects: Array[StateModifier] = []
 var continuous_effects: Array[ContinuousEffect] = []
 ## Concrete action-value grants expire during Match cleanup; they are not counters or auras.
 var timed_grants: Array[TimedGrant] = []
-## Merchant grants remain on this recipient until its next declared Fire or Reset, including through Return.
+## Merchant grants remain on this recipient until its next declared Fire, Reset or hand entry.
 var next_fire_stickers: Array[StringName] = []
 ## Compatibility reads for older UI/snapshot callers; values live in named Bow counter properties.
 var bow_damage_bonus: int:
@@ -60,14 +63,16 @@ var printed_state: Dictionary = {}
 var max_life_changes: Array[Dictionary] = []
 var ability_upgrades: Array[Dictionary] = []
 var deployment_enemy_side := false
+## RulesRunner records limited trigger captures here; hand entry clears the field instance's ledger.
+var trigger_turns: Dictionary = {}
 var copied_effects: Array[Dictionary] = []
 ## Historical forced movement survives Reset; Banner Bearer compares its turn instead of granting a mutable flag.
 var last_displaced_turn := -1
 
-## Creates the four modifier counters and the unit's numeric Stun counter.
+## Creates persistent Physical/Magical, consumable Shield/Mshield and numeric Stun counters.
 ## CardCatalogue calls UnitInfo.new() before applying printed values/effects.
 func _init() -> void:
-	for key in [PHYSICAL_COUNTER, MAGICAL_COUNTER, TEMP_PHYSICAL_COUNTER, TEMP_MAGICAL_COUNTER, STUN_COUNTER]:
+	for key in [PHYSICAL_COUNTER, MAGICAL_COUNTER, SHIELD_COUNTER, MSHIELD_COUNTER, STUN_COUNTER]:
 		var counter := Prop.new()
 		counter.name = key
 		counter.increment = Enum.p_increment.COUNTER
@@ -100,6 +105,16 @@ func reset_printed_state() -> void:
 	copied_effects.clear()
 	max_life_changes.clear()
 	ability_upgrades.clear()
+
+## Return, Revive and snapshot restoration put the same card identity into hand at printed state.
+## Hand entry clears field history; ordinary Reset keeps the current zone and turn ledger.
+func enter_hand() -> void:
+	reset_printed_state()
+	t_state = Enum.t_state.UNDEPLOYED
+	ihx = -1
+	active = false
+	last_displaced_turn = -1
+	trigger_turns.clear()
 
 ## Exact-ability upgrades remain recipient-bound; preview, legality and execution query the same immutable effect/verb identity.
 func ability_bonus(verb: Effect.Verb) -> Vector2i:
@@ -244,15 +259,15 @@ func has_flag(key: StringName) -> bool:
 
 ## Reads printed/stored and currently granted passive flags as one derived value.
 ## CombatResolver calls this at action resolution; continuous grants vanish with their source or condition.
+## Hand cards expose their printed flags through has_flag() for deck text and deployment permission.
 func has_effective_flag(key: StringName) -> bool:
-	if has_flag(key): return true
 	if t_state != Enum.t_state.DEPLOYED or Match.get_unit(iun) != self: return false
+	if has_flag(key): return true
 	for source in Match.army:
 		if source == null or source.t_state != Enum.t_state.DEPLOYED: continue
 		for aura in source.continuous_effects:
-			if aura == null or not aura.applies_to(source.iun, iun): continue
-			for output in aura.contributions:
-				if output != null and output.kind == Contribution.Kind.PASSIVE and output.property == key: return true
+			if aura != null and aura.has_output(Contribution.Kind.PASSIVE, key) and aura.applies_to(source.iun, iun):
+				return true
 	return false
 
 ## Returns live continuous Bow damage/range adjustments for this deployed recipient.
@@ -263,7 +278,7 @@ func effective_bow_bonus() -> Vector2i:
 
 ## Adds stored Bow/Cannon/Fire counters, next-Fire Embers, timed grants and live continuous values to printed parameters.
 ## Action legality, target queries, and resolvers call this with the same family and parameter order.
-## Typed modifier grants are excluded here; state_modifiers() derives those independently.
+## Only auras with values for the requested family evaluate their field conditions.
 func effective_action_values(action_family: StringName, printed: Array[int]) -> Array[int]:
 	var result := printed.duplicate()
 	if action_family == &"fire" and not result.is_empty(): result[0] += _counter_value(EMBER_COUNTER) + _counter_value(&"fire_damage")
@@ -280,7 +295,7 @@ func effective_action_values(action_family: StringName, printed: Array[int]) -> 
 	for source in Match.army:
 		if source == null or source.t_state != Enum.t_state.DEPLOYED: continue
 		for aura in source.continuous_effects:
-			if aura == null or not aura.applies_to(source.iun, iun): continue
+			if aura == null or not aura.has_output(Contribution.Kind.ACTION_VALUE, action_family) or not aura.applies_to(source.iun, iun): continue
 			for output in aura.contributions:
 				if output == null or output.kind != Contribution.Kind.ACTION_VALUE or output.action_family != action_family: continue
 				for index in mini(result.size(), output.parameters.size()): result[index] += output.parameters[index]
@@ -368,7 +383,7 @@ func state_modifiers(axis: int = -1) -> Vector2i:
 
 ## Hover modifier metadata queries this read-only breakdown using the same counters, state rules, auras and control as modifier getters.
 ## Counter totals have no historical source attribution; live contributions retain their actual source unit name, including copied-state origins.
-## Timed modifier rows identify their stored amount and End lifetime independently of live aura eligibility.
+## Hover modifier breakdowns identify stored amounts and captured friendly/enemy End independently of live aura eligibility.
 func modifier_breakdown(magical: bool = false) -> PackedStringArray:
 	var rows := PackedStringArray()
 	var axis := 1 if magical else 0
@@ -378,7 +393,7 @@ func modifier_breakdown(magical: bool = false) -> PackedStringArray:
 	if temporary != 0: rows.append("%+d temporary protection" % temporary)
 	for grant in timed_grants:
 		if grant != null and grant.kind == TimedGrant.Kind.MODIFIERS and grant.parameters.size() == 2 and grant.parameters[axis] != 0:
-			rows.append("%+d until End" % grant.parameters[axis])
+			rows.append("%+d until %sEnd" % [grant.parameters[axis], "your " if grant.expires_player == player else "enemy "])
 	if t_state == Enum.t_state.DEPLOYED and Match.get_unit(iun) == self:
 		var control := 0 if magical else ControlResolver.physical_bonus(self)
 		if control != 0: rows.append("%+d control" % control)

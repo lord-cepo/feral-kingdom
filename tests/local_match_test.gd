@@ -85,9 +85,36 @@ func _ready() -> void:
 	opponent_troop.ihx = 4
 	opponent_troop.actual_life = Match.army[2].actual_life
 	check(ControlResolver.region_owner(Match.map[4]) == Enum.owner.NONE, "Equal front-region totals are neutral")
+	_check_required_hero()
 
 	print("Local match integration: %d checks, %d failures" % [checks, failures])
 	get_tree().quit(0 if failures == 0 else 1)
+
+## Returns the chosen hero with and without deployment counters. Checks the
+## normal command and deployment gates, then settles the no-action loss.
+func _check_required_hero() -> void:
+	var hero := CardCatalogue.squirrel_king(1)
+	var ally := CardCatalogue.reed_archer(1)
+	var reserve := CardCatalogue.reed_archer(1)
+	var rival := CardCatalogue.squirrel_king(2)
+	var army: Array[UnitInfo] = [hero, ally, reserve, rival]
+	check(Match.start_local_match(army, 2, 3), "The hero redeployment fixture starts")
+	check(Match.deploy(hero.iun, 0), "The first hero deployment succeeds")
+	ally.t_state = Enum.t_state.DEPLOYED
+	ally.ihx = 4
+	ally.active = true
+	var command := Collection.movement(5)
+	var actor := TargetRef.unit(ally.iun)
+	var hero_ref := TargetRef.unit(hero.iun)
+	check(Match.rules_runner.available(command, actor), "The deployed hero permits other unit commands")
+	check(Action.return_to_hand(actor, hero_ref), "Return sends the selected hero back to hand")
+	check(Match.hero_deployment_required() and Match.can_deploy(hero.iun, 0),
+		"A returned hero with a counter can redeploy")
+	check(not Match.can_deploy(reserve.iun, 0) and not Match.rules_runner.submit(command, actor),
+		"The player cannot deploy a troop or command a deployed ally before the hero")
+	Match.players[1].deployments_remaining = 0
+	Match._check_no_legal_actions()
+	check(Match.winner == 2, "A hero in hand with zero deployment counters loses the settled action window")
 
 ## Creates two starting regions, a P1 intermediate region, and a neutral front region for deterministic checks.
 ## _ready() calls this before initializing Match.

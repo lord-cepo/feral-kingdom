@@ -105,20 +105,18 @@ func _begin_payment() -> void:
 	elif definition.cost != null: _begin(definition.cost, Status.COST)
 	else: begin_consequences()
 
-## Starts one suspended UI phrase and binds its completion back to this runner.
-## EffectExecution.start() and _on_phrase_finished() call this via phrase_started.
+## Starts one phrase and attaches the UI before selection. Player commands
+## resolve fixed targets automatically, except when replaying a retained target.
 func _begin(phrase: Effect.Phrase, phase: Status) -> void:
 	status = phase
 	current = PhraseExecution.new()
 	current.selection_only = (phase == Status.COST and definition.cost is Effect.CostBundle) or _previewing_consequence
+	current.auto_fixed_target = defer_cost_until_target and (phase != Status.CONSEQUENCE or _deferred_choice.is_empty())
 	current.finished.connect(_on_phrase_finished)
+	var run := current
 	phrase_started.emit(current)
-	current.begin(phrase, self)
-	if phase == Status.COST and defer_cost_until_target and definition.cost is Effect.CostPhrase \
-			and definition.cost.verb.name == &"self_stun" and current.status == PhraseExecution.Status.TARGET \
-			and current.candidates.size() == 1:
-		current.choose(current.candidates[0])
-	elif phase == Status.CONSEQUENCE and not _deferred_choice.is_empty():
+	run.begin(phrase, self)
+	if current == run and phase == Status.CONSEQUENCE and not _deferred_choice.is_empty():
 		_apply_deferred_choice()
 
 ## Previews one CHOOSE_ONE consequence before a player's action cost, otherwise follows normal payment order.
@@ -143,10 +141,12 @@ func _apply_deferred_choice() -> void:
 	if current.status == PhraseExecution.Status.TARGET and chosen_targets.size() == 1:
 		current.choose(chosen_targets[0])
 
-## Starts a single consequence or the first step of an ordered sequence.
+## Starts a single consequence or sequence after payment, unless the payment itself ended the match.
 ## Called after a paid cost or a matching event with no cost.
 func begin_consequences() -> void:
-	if definition.consequence == null:
+	if Match.winner != 0:
+		_end(false)
+	elif definition.consequence == null:
 		_end(true)
 	elif definition.consequence is Effect.ConsequenceSequence:
 		_consequence_index = 0
@@ -158,6 +158,7 @@ func begin_consequences() -> void:
 ## Records a completed phrase, preserves sequence progress, and starts the next step.
 ## PhraseExecution.finished is connected in _begin(); a failure ends the activation.
 ## Unpaid bundle identities/hex snapshots live in cost_choice_N; successful commit alone creates paid cost_N amounts and Summoner destination anchors.
+## The successful phrase that ends the match finishes its execution without opening another consequence choice.
 func _on_phrase_finished(success: bool) -> void:
 	var phase := status
 	if success and phase == Status.CONSEQUENCE and _previewing_consequence:
@@ -197,7 +198,7 @@ func _on_phrase_finished(success: bool) -> void:
 		_consequence_outcomes.append(phrase_result.duplicate(true))
 		results["step_%d" % _consequence_index] = phrase_result
 		_consequence_index += 1
-		if _consequence_index < sequence.phrases.size():
+		if Match.winner == 0 and _consequence_index < sequence.phrases.size():
 			_begin(sequence.phrases[_consequence_index], Status.CONSEQUENCE)
 		else:
 			results["consequence"] = {

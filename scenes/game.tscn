@@ -9,6 +9,7 @@ script = ExtResource("1_game")
 
 [node name="MatchSession" type="Node" parent="." unique_id=700000002]
 script = ExtResource("3_local_match")
+deployment_allowance = 8
 
 [node name="Board" parent="." unique_id=700000004 instance=ExtResource("2_board")]
 

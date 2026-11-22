@@ -5,6 +5,12 @@ var cost: RefCounted
 enum Policy { DEFAULT, OPTIONAL, MANDATORY }
 var policy := Policy.DEFAULT
 var condition: Condition
+## Stable printed key for a trigger that can be captured once per unit per turn.
+var once_per_turn_key := ""
+## A declaration reaction whose captured execution precedes even an Instant attack's damage.
+var before_attack_resolution := false
+## Optional authored wording for compound card rules that cannot be inferred from individual object labels.
+var rule_text := ""
 var event: EventPhrase
 var consequence: RefCounted
 ## True for engine-supplied rules that are executable but omitted from printed board summaries.
@@ -52,24 +58,27 @@ func is_action_free() -> bool:
 ## EffectExecution collects every choice before CostPayment preflights and commits once.
 class CostBundle extends RefCounted:
 	var phrases: Array[CostPhrase] = []
-	## Copies reusable payment definitions; no chosen targets live on the bundle.
-	func _init(steps: Array[CostPhrase]) -> void:
+	var implicit_self := false
+	## Copies payments and lets authors collect fixed SELF and named SELF-property payments without a picker.
+	func _init(steps: Array[CostPhrase], auto_collect_self: bool = false) -> void:
 		phrases = steps.duplicate()
-	## Rejects unsupported costs before selection; Return, Disable and deployments are accepted because CostPayment preflights their ledgers/departures.
+		implicit_self = auto_collect_self
+	## Rejects unsupported costs before selection; CostPayment preflights departures, deployments and explicit Shield payments.
 	func validate() -> String:
 		if phrases.is_empty(): return "A cost bundle must contain a payment."
 		for phrase in phrases:
 			if phrase == null: return "A cost bundle contains an empty payment."
 			var error := phrase.validate()
 			if not error.is_empty(): return error
-			if phrase.optional or phrase.verb.name not in [&"self_stun", &"decrement", &"deactivate", &"pay_life", &"next_turn_actions", &"choose_counter_unit", &"sacrifice", &"disable", &"return_to_hand", &"spend_deployment"]:
-				return "Cost bundles support only mandatory preflighted activity, counter, life, departure, deployment and next-turn-action payments."
+			if phrase.optional or phrase.verb.name not in [&"self_stun", &"decrement", &"deactivate", &"pay_life", &"next_turn_actions", &"choose_counter_unit", &"sacrifice", &"disable", &"return_to_hand", &"spend_deployment", &"shield"]:
+				return "Cost bundles support only mandatory preflighted payments."
 		return ""
 
 class Verb extends RefCounted:
 	var name: StringName
 	var function: Callable
 	var legality: Callable
+	var prepare_legality: Callable
 	var user_params: Array
 	var subject_kind: TargetRef.Kind
 	var target_kind: TargetRef.Kind
@@ -78,11 +87,15 @@ class Verb extends RefCounted:
 	var amount_limit := 0
 	var definition_origin: Verb
 
+	## Creates a verb with single-target legality and an optional read-only batch preparation.
+	## Named factories supply the preparation only when it uses the same rules as the live check.
 	func _init(action_name: StringName, action: Callable, check: Callable,
-			subj_kind: TargetRef.Kind, trgt_kind: TargetRef.Kind, params: Array = []) -> void:
+			subj_kind: TargetRef.Kind, trgt_kind: TargetRef.Kind, params: Array = [],
+			prepare: Callable = Callable()) -> void:
 		name = action_name
 		function = action
 		legality = check
+		prepare_legality = prepare
 		subject_kind = subj_kind
 		target_kind = trgt_kind
 		user_params = params.duplicate()
@@ -90,7 +103,7 @@ class Verb extends RefCounted:
 	## Copies the named action definition and its parameter array before phrase-specific sticker application.
 	## Phrase.add_sticker() uses this so one card's sticker cannot change another phrase's Verb.
 	func copy() -> Verb:
-		var result := Verb.new(name, function, legality, subject_kind, target_kind, user_params)
+		var result := Verb.new(name, function, legality, subject_kind, target_kind, user_params, prepare_legality)
 		result.atomic_cost = atomic_cost
 		result.amount_limit = amount_limit
 		return result
@@ -119,6 +132,31 @@ class Verb extends RefCounted:
 		if not accepts_subject(subject) or target == null or target.kind != target_kind or not target.valid(): return false
 		if amount_limit > 0 and not user_params.is_empty() and int(user_params[0]) > amount_limit: return false
 		return bool(legality.callv([subject, target] + user_params)) if legality.is_valid() else true
+
+	## Prepares the current verb's read-only check for a picker or an availability scan.
+	## An empty callable means this source or its bound parameters cannot use the verb.
+	func prepare_target_check(subject: TargetRef) -> Callable:
+		if not accepts_subject(subject): return Callable()
+		if amount_limit > 0 and not user_params.is_empty() and int(user_params[0]) > amount_limit: return Callable()
+		return prepare_legality.callv([subject] + user_params)
+
+	## Filters the current selector results for a picker or a read-only availability query.
+	## A prepared check lasts only for this call. Commit and per-recipient execution still revalidate live.
+	func filter_targets(subject: TargetRef, candidates: Array[TargetRef], first_only: bool = false) -> Array[TargetRef]:
+		var result: Array[TargetRef] = []
+		if prepare_legality.is_valid() and candidates.size() > 1:
+			var check := prepare_target_check(subject)
+			if not check.is_valid(): return result
+			for candidate in candidates:
+				if not bool(check.call(candidate)): continue
+				result.append(candidate)
+				if first_only: break
+		else:
+			for candidate in candidates:
+				if not can_apply(subject, candidate): continue
+				result.append(candidate)
+				if first_only: break
+		return result
 
 	func execute_many(subject: TargetRef, targets: Array[TargetRef], still_legal: Callable = Callable()) -> Array[Dictionary]:
 		var outcomes: Array[Dictionary] = []
@@ -227,6 +265,8 @@ class EventPhrase extends Phrase:
 	var observed_actions: Array[StringName] = []
 	var matches_any_action := false
 	var observes_family := false
+	## Attack declarations bind their recipient by action because Bash targets a unit and the ranged actions target hexes.
+	var observes_attack_declaration := false
 	var detail_constraints: Dictionary = {}
 	## Explicit cancellation observers (such as Flee) opt in; ordinary attack triggers still require successful occurrences.
 	var observes_cancelled := false
@@ -237,6 +277,7 @@ class EventPhrase extends Phrase:
 		&"patk": [&"gore", &"bash", &"bow"],
 		&"ratk": [&"fire", &"cannon"],
 	}
+	const ATTACK_DECLARATIONS: Array[StringName] = [&"bash", &"bow", &"fire", &"cannon"]
 
 	## Creates a pattern for one exact event action without inventing an executable Verb.
 	## Card factories pass selectors for the captured subject/target and may constrain
@@ -280,6 +321,14 @@ class EventPhrase extends Phrase:
 		result.observes_family = true
 		return result
 
+	## Watches a qualifying actor start Bash or declare Bow, Fire or Cannon without filtering the recipient.
+	static func observe_attack_declaration(actors: Selector) -> EventPhrase:
+		var recipient := Selectors.Reference.new(Selectors.Anchor.EVENT_TARGET)
+		var result := observe_any(ATTACK_DECLARATIONS, actors, recipient,
+			TargetRef.Kind.UNIT, TargetRef.Kind.HEX, &"target")
+		result.observes_attack_declaration = true
+		return result
+
 	## Validates the action filter, stage, selectors, domains, and detail constraints.
 	## EffectExecution.start() runs this before paying costs or applying consequences.
 	func validate(ctx: RuleContext = null) -> String:
@@ -295,31 +344,38 @@ class EventPhrase extends Phrase:
 			if action_name.is_empty(): return "Event pattern action names cannot be empty."
 		if not observed_action.is_empty() and observed_action not in ACTION_FAMILIES and observed_action not in observed_actions:
 			return "Event pattern action name cannot be empty."
-		for pair in [[subject, observed_subject_kind], [target, observed_target_kind]]:
+		var target_kind := Selector.CONTEXTUAL if observes_attack_declaration else int(observed_target_kind)
+		for pair in [[subject, observed_subject_kind], [target, target_kind]]:
 			var selector: Selector = pair[0]
 			var error := selector.validate(ctx)
 			if not error.is_empty(): return error
 			var native_kind := selector.output_kind(ctx)
-			if native_kind >= 0 and not TargetResolver.compatible(native_kind, pair[1]):
+			if native_kind >= 0 and pair[1] >= 0 and not TargetResolver.compatible(native_kind, pair[1]):
 				return "Event pattern kind mismatch: use an explicit projection."
 		return ""
 
-	## Matches captured action/stage/details and participants; cancellation observers opt in explicitly for Flee-style rules.
-	## Does not run the verb or check current action legality; an event may already have deactivated or moved its participants.
-	func matches(ctx: RuleContext, trigger: EffectEvent) -> bool:
-		var observed_pattern := not observed_action.is_empty() or not observed_actions.is_empty() or matches_any_action
-		var action_name := observed_action if observed_pattern else (verb.name if verb != null else &"")
-		var subject_kind := observed_subject_kind if observed_pattern else verb.subject_kind
-		var target_kind := observed_target_kind if observed_pattern else verb.target_kind
+	## RulesRunner uses this cheap header filter before allocating a context or validating selectors.
+	## Cancellation observers opt in explicitly for Flee-style rules.
+	func accepts_occurrence(trigger: EffectEvent) -> bool:
 		if trigger == null or trigger.stage != stage: return false
 		if not trigger.succeeded() and not (observes_cancelled and bool(trigger.data.get("cancelled", false))): return false
-		if not matches_any_action:
-			var accepted := observed_actions
-			if accepted.is_empty(): accepted = [action_name]
-			var family := action_name if ACTION_FAMILIES.has(action_name) else &""
-			if not family.is_empty():
-				if trigger.action not in ACTION_FAMILIES[family]: return false
-			elif trigger.action not in accepted: return false
+		if matches_any_action: return true
+		var action_name := observed_action if not observed_action.is_empty() or not observed_actions.is_empty() else (verb.name if verb != null else &"")
+		if ACTION_FAMILIES.has(action_name): return trigger.action in ACTION_FAMILIES[action_name]
+		if observed_actions.is_empty(): return trigger.action == action_name
+		return trigger.action in observed_actions
+
+	## EffectExecution checks the complete captured pattern before resolving a triggered consequence.
+	func matches(ctx: RuleContext, trigger: EffectEvent) -> bool:
+		return accepts_occurrence(trigger) and matches_participants(ctx, trigger)
+
+	## RulesRunner calls this after the header check and validation; historical events do not recheck action legality.
+	func matches_participants(ctx: RuleContext, trigger: EffectEvent) -> bool:
+		var observed_pattern := not observed_action.is_empty() or not observed_actions.is_empty() or matches_any_action
+		var subject_kind := observed_subject_kind if observed_pattern else verb.subject_kind
+		var target_kind := observed_target_kind if observed_pattern else verb.target_kind
+		if observes_attack_declaration:
+			target_kind = TargetRef.Kind.UNIT if trigger.action == &"bash" else TargetRef.Kind.HEX
 		var event_details := trigger.data
 		for key in detail_constraints:
 			var field_name := String(key)

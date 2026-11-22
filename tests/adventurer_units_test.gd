@@ -9,6 +9,7 @@ func _ready() -> void:
 	test_shaman_payment_guard()
 	test_live_modifiers_and_scout()
 	test_berserker_ranger_and_protection()
+	test_berserker_stun_only_walk()
 	test_rogue_and_hunter()
 	test_witch_druid_and_warlock()
 	test_summoner()
@@ -95,6 +96,25 @@ func begin(unit: UnitInfo, index: int) -> EffectExecution:
 	run.start()
 	check(run.status != EffectExecution.Status.FAILED, "%s effect %d starts: %s" % [unit.name, index, run.error])
 	return run
+
+## Berserker's Walk spends only self-Stun, retains enemy-only destinations and rejects wrong-owner/repeated activity.
+func test_berserker_stun_only_walk() -> void:
+	fixture()
+	var unit := add(AdventurerCatalogue.marmot_berserker(1), 0)
+	plain(2, 2)
+	var opponent := add(AdventurerCatalogue.marmot_berserker(2), 5)
+	var walk := unit.effects[0]
+	check(walk.is_action_free() and walk.cost_label == &"S", "Berserker Walk is explicitly [S]")
+	check(EffectText.describe_effect(walk, unit).contains("[lb]S[rb]"), "Berserker hover exposes the Stun-only cost")
+	check(not unit.effects[1].is_action_free(), "Berserker Shield keeps its player-action cost")
+	var actions := Match.players[1].actions_remaining
+	check(not Match.rules_runner.command_available(opponent.effects[0], TargetRef.unit(opponent.iun)), "Opponent cannot use Berserker Walk on this turn")
+	check(Match.rules_runner.submit(walk, TargetRef.unit(unit.iun)) and choose(TargetRef.unit(unit.iun)), "Berserker pays self-Stun for Walk")
+	check(not choose(TargetRef.hex(1)) and not choose(TargetRef.hex(5)), "Empty and out-of-range destinations remain illegal")
+	check(choose(TargetRef.hex(2)) and unit.ihx == 2, "Berserker Walk reaches the enemy")
+	check(not unit.active and unit._counter_value(UnitInfo.STUN_COUNTER) == 1, "Walk deactivates and pays exactly one Stun")
+	check(Match.players[1].actions_remaining == actions, "Committed [S] Walk preserves player actions")
+	check(not Match.rules_runner.command_available(walk, TargetRef.unit(unit.iun)), "Inactive Berserker cannot repeat Walk")
 
 ## Barbarian/Druid modifiers are derived and Scout's allowance follows geography even under enemy control.
 func test_live_modifiers_and_scout() -> void:
@@ -233,7 +253,7 @@ func test_summoner() -> void:
 	check(friend.t_state == Enum.t_state.UNDEPLOYED, "Return cost places friend in hand")
 	check(not run.current.choose(TargetRef.unit(enemy_hand.iun)), "Summoner cannot deploy an enemy hand card")
 	run.current.choose(TargetRef.unit(friend.iun))
-	check(friend.t_state == Enum.t_state.DEPLOYED and friend.ihx == 4 and friend.actual_life == 3, "Same friend redeploys at captured hex, preserving health")
+	check(friend.t_state == Enum.t_state.DEPLOYED and friend.ihx == 4 and friend.actual_life == friend.max_life, "Same card redeploys at its former hex with printed health")
 	check(not friend.active and friend._counter_value(UnitInfo.STUN_COUNTER) == 1, "Effect deployment enters inactive with normal one Stun")
 	check(Match.players[1].deployments_remaining == 3, "Exchange does not spend an additional deployment")
 
@@ -255,7 +275,7 @@ func test_cleric() -> void:
 	check(Match.rules_runner.active != null, "Enemy Return captures Cleric Reset")
 	choose(TargetRef.unit(friend.iun))
 	check(friend.actual_life == friend.max_life, "Cleric's Return trigger resets chosen unit")
-	check(EffectText.describe_effect(cleric.effects[0], cleric).contains("already-present"), "Cleric effect explains existing counter restriction")
+	check(EffectText.describe_effect(cleric.effects[0], cleric).contains("existing counter"), "Cleric effect explains existing counter restriction")
 
 ## Each positive friendly Ember addition pays one Soul regardless of size; zero/removal/enemy awards do not trigger.
 func test_alchemist() -> void:
@@ -369,7 +389,7 @@ func test_registration() -> void:
 	var cards := AdventurerCatalogue.all_units(1)
 	check(cards.size() == 20, "All twenty adventurer factories are registered")
 	var army := CardCatalogue.starter_army()
-	check(army.size() == 172, "Both players receive the expanded 86-card roster")
+	check(army.size() == 212, "Both players receive the expanded 106-card roster")
 	var ids: Dictionary = {}
 	for unit in cards:
 		check(not ids.has(unit.uuid), "Adventurer UUIDs are distinct")

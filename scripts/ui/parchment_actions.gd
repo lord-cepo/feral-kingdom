@@ -7,28 +7,42 @@ var unit_id := -1
 const FRAME_RATE := 20.0
 const OPEN_TIME := 7.0 / FRAME_RATE
 const BUTTON_SIZE := Vector2(180, 54)
+const FRAMES: Array[Texture2D] = [
+	preload("res://assets/ui/parchment/frame_0.png"),
+	preload("res://assets/ui/parchment/frame_1.png"),
+	preload("res://assets/ui/parchment/frame_2.png"),
+	preload("res://assets/ui/parchment/frame_3.png"),
+	preload("res://assets/ui/parchment/frame_4.png"),
+	preload("res://assets/ui/parchment/frame_5.png"),
+	preload("res://assets/ui/parchment/frame_6.png"),
+]
 var elapsed := 0.0
 var closing := false
 var visual_time := 0.0
-var frames: Array[Texture2D] = []
 var papers: Array[TextureRect] = []
 var captions: Array[Control] = []
 var buttons: Array[Button] = []
 var indices: Array[int] = []
+var availability: Array[bool] = []
 var action_materials: Array[ShaderMaterial] = []
 
 ## Controller._refresh_hud() creates this once per selected identity; rows retain the controller's movement-first shortcut order.
 ## Smaller parchment buttons play seven frames at 20fps; shortcut numbers sit inside PixelLab keyboard keycaps.
 ## Disabled rows share one greyscale material; action copy sits 3px left and 5px down, and key numbers offset (-3,-14).
+## The shared frames load with the menu script before a click creates the first row.
+## Buttons start disabled until the opening animation finishes.
+## Keep the menu invisible while setup runs off-tree; _ready reveals it after layout.
+## Each caption stays on one line and fits its available width after the container sizes it.
 func setup(owner_controller: LocalMatchController, unit: UnitInfo) -> void:
+	hide()
 	controller = owner_controller
 	unit_id = unit.iun
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for index in 7: frames.append(load("res://assets/ui/parchment/frame_%d.png" % index))
 	indices = controller._ordered_effect_indices(unit)
 	size = BUTTON_SIZE
 	for slot in indices.size():
 		var button := Button.new()
+		button.disabled = true
 		var material := ShaderMaterial.new()
 		material.shader = preload("res://assets/shaders/action_button.gdshader")
 		button.material = material
@@ -43,7 +57,7 @@ func setup(owner_controller: LocalMatchController, unit: UnitInfo) -> void:
 		add_child(button)
 		buttons.append(button)
 		var paper := TextureRect.new()
-		paper.texture = frames[0]
+		paper.texture = FRAMES[0]
 		paper.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		paper.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		paper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -79,7 +93,11 @@ func setup(owner_controller: LocalMatchController, unit: UnitInfo) -> void:
 		shortcut.position = Vector2(-3, -14)
 		var action := RichTextLabel.new()
 		action.bbcode_enabled = true
-		action.text = "[center]%s[/center]" % controller._parchment_action_text(unit.effects[indices[slot]], unit)
+		action.autowrap_mode = TextServer.AUTOWRAP_OFF
+		var effect := unit.effects[indices[slot]]
+		var caption_text := controller._parchment_action_text(effect, unit)
+		action.text = _single_line_caption(caption_text)
+		action.resized.connect(_fit_action_caption.bind(action, caption_text, effect, unit))
 		action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		action.add_theme_font_size_override("normal_font_size", 21)
 		action.add_theme_color_override("default_color", Color("#382419"))
@@ -99,6 +117,24 @@ func setup(owner_controller: LocalMatchController, unit: UnitInfo) -> void:
 		caption.modulate.a = 0.0
 		_inherit_button_material(button)
 
+## RichTextLabel lays out one centered line even when an authored description contains a line break.
+static func _single_line_caption(text: String) -> String:
+	return "[center]%s[/center]" % text.replace("\n", " ")
+
+## The caption's resized signal supplies its usable width after the shortcut and margins take their space.
+## Keep the detailed text when it fits and use the shared short effect label when the parchment needs less text.
+func _fit_action_caption(action: RichTextLabel, caption_text: String, effect: Effect, unit: UnitInfo) -> void:
+	if action.size.x <= 0: return
+	action.text = _single_line_caption(caption_text)
+	action.add_theme_font_size_override("normal_font_size", 21)
+	if action.get_content_width() <= action.size.x: return
+	action.add_theme_font_size_override("normal_font_size", 18)
+	if action.get_content_width() <= action.size.x: return
+	var short_text := preload("res://scripts/ui/hex_effect_text.gd").effect_label(effect, unit)
+	action.text = _single_line_caption(short_text)
+	if action.get_content_width() > action.size.x:
+		action.text = _single_line_caption("Action")
+
 ## setup() applies the row material to every descendant so greyscale includes PixelLab icons and font glyphs.
 func _inherit_button_material(node: Node) -> void:
 	for child in node.get_children():
@@ -113,8 +149,32 @@ func begin_close() -> void:
 		button.disabled = true
 		button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+## Controller._sync_parchment_menu() refreshes the displayed legality when selection or match state changes.
+## Cache one result per row for the animation; action input rechecks legality before submission.
+func refresh_availability(unit: UnitInfo) -> void:
+	availability.resize(indices.size())
+	for index in indices.size():
+		availability[index] = controller._action_available(unit, indices[index])
+		action_materials[index].set_shader_parameter("unavailable", not availability[index])
+
+## The controller attaches the menu to its canvas after setup. Lay it out before the first draw, including deferred unit switches.
+func _ready() -> void:
+	get_viewport().size_changed.connect(_layout_rows)
+	_layout_rows()
+	show()
+
+## Entry and viewport resize place and wrap the parchment buttons along the bottom of the screen.
+func _layout_rows() -> void:
+	var view := get_viewport_rect().size
+	var columns := maxi(1, mini(buttons.size(), int((view.x - 32.0) / 188.0)))
+	var rows := ceili(float(buttons.size()) / columns)
+	size = Vector2(columns * 188.0 - 8.0, rows * 60.0 - 6.0)
+	position = Vector2(maxf(8, (view.x - size.x) * 0.5), maxf(8, view.y - size.y - 18))
+	for index in buttons.size():
+		buttons[index].position = Vector2((index % columns) * 188, (index / columns) * 60)
+
 ## Godot advances or reverses the same opening timeline at 20fps; deselection closes from its current frame.
-## Bottom-centered rows wrap on narrow screens; rule availability is queried only while the selected unit remains valid.
+## Bottom-centered rows wrap on narrow screens and use the last HUD refresh's legality results.
 ## No legal target disables/greyscales a row; the runner's selected definition drives an eased enlargement, gentle pulse without changing parchment color.
 ## Closing preserves each row's last color state instead of treating dismissal as action unavailability.
 func _process(delta: float) -> void:
@@ -126,25 +186,15 @@ func _process(delta: float) -> void:
 	var active := Match.rules_runner.active
 	var frame := clampi(int(elapsed * FRAME_RATE), 0, 6)
 	for index in buttons.size():
-		var available := not closing and controller._action_available(unit, indices[index])
-		if not closing: action_materials[index].set_shader_parameter("unavailable", not available)
-		papers[index].texture = frames[frame]
+		papers[index].texture = FRAMES[frame]
 		captions[index].modulate.a = 0.0 if closing else smoothstep(5.0 / FRAME_RATE, OPEN_TIME, elapsed)
-		buttons[index].disabled = closing or elapsed < OPEN_TIME
-		if not closing and elapsed >= OPEN_TIME:
-			buttons[index].disabled = not available
+		buttons[index].disabled = closing or elapsed < OPEN_TIME or not availability[index]
 		var selected: bool = not closing and active != null and active.source != null and active.source.kind == TargetRef.Kind.UNIT and active.source.id == unit_id and active.definition == unit.effects[indices[index]]
 		var target_scale := 1.07 + 0.015 * sin(visual_time * 5.0) if selected else 1.0
 		buttons[index].scale = buttons[index].scale.lerp(Vector2.ONE * target_scale, minf(1.0, delta * 14.0))
 		buttons[index].z_index = 1 if selected else 0
 		papers[index].modulate = Color.WHITE
-	var view := get_viewport_rect().size
-	var columns := maxi(1, mini(buttons.size(), int((view.x - 32.0) / 188.0)))
-	var rows := ceili(float(buttons.size()) / columns)
-	size = Vector2(columns * 188.0 - 8.0, rows * 60.0 - 6.0)
-	position = Vector2(maxf(8, (view.x - size.x) * 0.5), maxf(8, view.y - size.y - 18))
-	for index in buttons.size():
-		buttons[index].position = Vector2((index % columns) * 188, (index / columns) * 60)
 	if closing and elapsed <= 0.0:
+		hide()
 		closed.emit()
 		queue_free()

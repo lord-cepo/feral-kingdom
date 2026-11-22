@@ -9,10 +9,10 @@ static func friends() -> QuerySelector:
 	result.state = Enum.t_state.DEPLOYED
 	return result
 
-## AC effects collect normal activity and one explicit health payment before any consequence; lethal payments remain legal.
+## Doctor, Sorcerer and Guinea Pig collect their fixed activity and health payments automatically before the consequence; lethal payments remain legal.
 static func life_cost(actual: int, maximum: int = 0) -> Effect.CostBundle:
 	return Effect.CostBundle.new([Collection.action_cost(), Effect.CostPhrase.new(Selectors.Self.new(),
-		Verbs.pay_life(actual, maximum), Selectors.Self.new())])
+		Verbs.pay_life(actual, maximum), Selectors.Self.new())], true)
 
 ## Explorer captures the actual positive current/max components and awards its own physical/magic counters independently.
 static func grow_with_friends() -> Effect:

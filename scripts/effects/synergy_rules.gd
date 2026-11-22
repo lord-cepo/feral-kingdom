@@ -48,16 +48,17 @@ static func phrase(verb: Effect.Verb, targets: Selector, automatic: bool = false
 	return Effect.ConsequencePhrase.new(Selectors.Self.new(), verb, targets,
 		Effect.Phrase.TargetMode.ALL if automatic else Effect.Phrase.TargetMode.CHOOSE_ONE)
 
-## Builds the approved [A]/[S]/[AS]/[2S] costs; extra costs join one atomic bundle and action-free propagates to verb legality.
+## Builds the approved costs. Ammunition commands opt into collecting their
+## fixed SELF bundle payments automatically, with the same atomic commit.
 static func command(consequence: Effect.ConsequencePhrase, stun: int = 1, action: bool = true,
-		extra: Effect.CostPhrase = null) -> Effect:
+		extra: Effect.CostPhrase = null, automatic_payment: bool = false) -> Effect:
 	var payments: Array[Effect.CostPhrase] = []
 	if stun > 0:
 		payments.append(Effect.CostPhrase.new(Selectors.Self.new(), Verbs.pay_activity(not action, stun), Selectors.Self.new()))
 	if extra != null: payments.append(extra)
 	var payment: RefCounted = null
 	if payments.size() == 1: payment = payments[0]
-	elif payments.size() > 1: payment = Effect.CostBundle.new(payments)
+	elif payments.size() > 1: payment = Effect.CostBundle.new(payments, automatic_payment)
 	var effect := Collection.with_action_policy(consequence, stun == 0, not action, payment)
 	effect.cost_label = StringName(("A" if action else "") + (str(stun) if stun > 1 else "") + ("S" if stun > 0 else ""))
 	return effect

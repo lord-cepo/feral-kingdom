@@ -7,13 +7,27 @@ static var _resolving_bash: BashInfo
 ## Action.can_bow() calls this before selection and again when the chosen target commits.
 static func can_bow(source: TargetRef, target: TargetRef, amount: int, range: int,
 		action_free: bool = false) -> bool:
-	if not _can_start_attack(source, target, amount, range, action_free): return false
-	var source_hex := Match.get_hex(source.hex_id())
-	var attacker := Match.get_unit(source.id)
-	var effective_range := range + attacker.effective_bow_bonus().y if attacker != null else range
-	if source_hex == null or DistanceSelector.hex_distance(source_hex.coordinate, Match.get_hex(target.id).coordinate) > effective_range: return false
-	var enemy := enemy_on(target.id, Match.owner_of(source))
-	return Match.occupants(target.id).is_empty() or enemy != null
+	if amount < 0 or range < 0: return false
+	var attacker := _acting_unit(source, action_free)
+	if attacker == null: return false
+	return _bow_target(target, attacker.player, Match.get_hex(attacker.ihx).coordinate,
+		range + attacker.effective_bow_bonus().y)
+
+## Checks only the destination after can_bow() or a picker has evaluated the source and live range.
+static func _bow_target(target: TargetRef, owner: int, origin: Vector2i, range: int,
+		occupied: Variant = null) -> bool:
+	var tile := _target_hex(target)
+	return tile != null and DistanceSelector.hex_distance(origin, tile.coordinate) <= range \
+		and _landing_sides(target.id, owner, occupied) != Match.OCCUPIED_BY_OWNER
+
+## Supplies Bow pickers with one source and effective range check for their entire candidate list.
+static func prepare_bow_targets(source: TargetRef, amount: int, range: int, _instant: bool,
+		_pierce: bool, action_free: bool) -> Callable:
+	if amount < 0 or range < 0: return Callable()
+	var attacker := _acting_unit(source, action_free)
+	if attacker == null: return Callable()
+	return _bow_target.bind(attacker.player, Match.get_hex(attacker.ihx).coordinate,
+		range + attacker.effective_bow_bonus().y, Match.occupant_sides_by_hex(attacker.player))
 
 ## Captures a Bow target and queues it for the next opposing Combat window, or resolves it now.
 ## Action.bow() calls this after the target passes can_bow(); occupied targets retain unit identity.
@@ -24,8 +38,7 @@ static func declare_bow(source: TargetRef, target: TargetRef, amount: int, range
 	Match.rules_runner.end_boundary()
 	return result
 
-## Implements declare_bow inside its public wrapper's mutation boundary, capturing upgraded damage.
-## Captured followups run only after this operation finishes its cleanup.
+## Captures upgraded Bow damage; an eligible declaration reaction can hold Instant impact until its choice finishes.
 static func _apply_declare_bow(source: TargetRef, target: TargetRef, amount: int, range: int,
 		instant: bool, pierce: bool, action_free: bool = false) -> bool:
 	if not can_bow(source, target, amount, range, action_free): return false
@@ -41,8 +54,10 @@ static func _apply_declare_bow(source: TargetRef, target: TargetRef, amount: int
 	var victim := enemy_on(target.id, attack.owner)
 	if victim != null: attack.target_unit_id = victim.id
 	if not instant: Match.pending_bow_attacks.append(attack)
-	Match.action_event.emit(EffectEvent.new(&"bow", source, target, _bow_details(attack), &"target"))
-	if instant: resolve_bow(attack)
+	var declaration := EffectEvent.new(&"bow", source, target, _bow_details(attack), &"target")
+	Match.action_event.emit(declaration)
+	if instant and not Match.rules_runner.defer_reacted_attack(declaration, resolve_bow.bind(attack)):
+		resolve_bow(attack)
 	return true
 
 ## Resolves one captured Bow, requiring its original victim to remain on its hex.
@@ -103,17 +118,59 @@ static func declare_gore(source: TargetRef, target: TargetRef, amount: int, rang
 ## Action.can_move()/can_fly() call this for previews and PhraseExecution repeats it at commit.
 static func can_move(source: TargetRef, target: TargetRef, range: int, flying: bool,
 		action_free: bool = false) -> bool:
-	var action_name: StringName = &"fly" if flying else &"move"
-	var mover := Match.get_unit(source.id) if source != null and source.kind == TargetRef.Kind.UNIT else null
-	if mover != null: range = mover.effective_action_values(action_name, [range])[0]
-	if not _can_start_attack(source, target, 0, range, action_free): return false
-	var unit := Match.get_unit(source.id)
-	if unit == null or unit.type == Enum.type.TEMPLE or source.hex_id() == target.id: return false
-	if DistanceSelector.hex_distance(Match.get_hex(source.hex_id()).coordinate,
-			Match.get_hex(target.id).coordinate) > range or _bash_at(target.id): return false
-	for occupant in Match.occupants(target.id):
-		if Match.owner_of(occupant) == Match.owner_of(source): return false
-	return flying or _has_free_move_path(source.hex_id(), target.id, range)
+	var mover := _acting_unit(source, action_free)
+	if mover == null or mover.type == Enum.type.TEMPLE: return false
+	range = mover.effective_action_values(&"fly" if flying else &"move", [range])[0]
+	var tile := _target_hex(target)
+	if tile == null: return false
+	var sides := Match.occupant_sides(target.id, mover.player)
+	if not _can_land_move(mover.ihx, tile, range, flying, sides): return false
+	return sides != 0 or not _must_land_in_bash(mover, range, flying)
+
+## Movement legality and compulsory Bash use identical range, occupancy and path checks without recursing through the passive.
+static func _can_land_move(origin: int, target: HexInfo, range: int, flying: bool, sides: int,
+		reachable: Variant = null) -> bool:
+	if origin == target.hex_id or (sides & Match.OCCUPIED_BY_OWNER) != 0: return false
+	var steps := DistanceSelector.hex_distance(Match.get_hex(origin).coordinate, target.coordinate)
+	if steps > range or _bash_at(target.hex_id): return false
+	if flying or steps == 1: return true
+	if reachable != null: return reachable.has(target.hex_id)
+	return not walk_path(origin, target.hex_id, range).is_empty()
+
+## Evaluates compulsory Bash once per picker, or for a single otherwise legal empty landing.
+## Only deployed enemies can supply the required landing, and shared or blocked hexes remain illegal.
+static func _must_land_in_bash(mover: UnitInfo, range: int, flying: bool, occupied: Variant = null,
+		reachable: Variant = null) -> bool:
+	if not mover.has_effective_flag(&"must_bash"): return false
+	for enemy: UnitInfo in Match.army:
+		if enemy == null or enemy.player == mover.player or enemy.t_state != Enum.t_state.DEPLOYED: continue
+		var tile := Match.get_hex(enemy.ihx)
+		if tile != null and _can_land_move(mover.ihx, tile, range, flying,
+				_landing_sides(enemy.ihx, mover.player, occupied), reachable):
+			return true
+	return false
+
+## Supplies Move/Fly pickers with one action-window, effective range, and compulsory Bash check.
+## The returned callable is used only during the current read-only target enumeration.
+static func prepare_move_targets(source: TargetRef, range: int, action_free: bool, flying: bool) -> Callable:
+	var mover := _acting_unit(source, action_free)
+	if mover == null or mover.type == Enum.type.TEMPLE: return Callable()
+	range = mover.effective_action_values(&"fly" if flying else &"move", [range])[0]
+	if range < 0: return Callable()
+	var occupied := Match.occupant_sides_by_hex(mover.player)
+	var reachable: Variant = null
+	if not flying and range > 1:
+		reachable = _walk_predecessors(mover.ihx, range, -1, occupied)
+	var must_bash := _must_land_in_bash(mover, range, flying, occupied, reachable)
+	return _prepared_move_target.bind(mover.ihx, range, flying, must_bash, occupied, reachable)
+
+## Applies the same landing and path rules as can_move() with the current picker's shared inputs.
+static func _prepared_move_target(target: TargetRef, origin: int, range: int,
+		flying: bool, must_bash: bool, occupied: Dictionary[int, int], reachable: Variant) -> bool:
+	var tile := _target_hex(target)
+	if tile == null: return false
+	var sides: int = occupied.get(target.id, 0)
+	return (not must_bash or sides != 0) and _can_land_move(origin, tile, range, flying, sides, reachable)
 
 ## Checks whether SELF can immediately heal an injured ally in range.
 ## Action.can_mend() uses this for selection and commit; full-health units are not candidates.
@@ -174,8 +231,7 @@ static func stun(source: TargetRef, target: TargetRef, amount: int, range: int,
 	Match.rules_runner.end_boundary()
 	return true
 
-## Applies immediate healing inside a mutation boundary and republishes derived control.
-## Action.mend() calls this; the resolved event records actual life restored for triggers.
+## Action.mend calls this after choosing a living wounded ally; the resolved event records actual life restored.
 static func mend(source: TargetRef, target: TargetRef, amount: int, range: int,
 		action_free: bool = false) -> bool:
 	if not can_mend(source, target, amount, range, action_free): return false
@@ -195,9 +251,9 @@ static func mend(source: TargetRef, target: TargetRef, amount: int, range: int,
 ## Moves or flies a unit immediately and captures historical location/control for triggers.
 ## Action.move()/fly() call this after selection; movement completes before followups can run.
 static func move_unit(source: TargetRef, target: TargetRef, range: int, flying: bool,
-		action_free: bool = false) -> bool:
+		action_free: bool = false, instigator: TargetRef = null) -> bool:
 	Match.rules_runner.begin_boundary()
-	var result := _apply_move_unit(source, target, range, flying, action_free)
+	var result := _apply_move_unit(source, target, range, flying, action_free, instigator)
 	Match.rules_runner.end_boundary()
 	return result
 
@@ -206,28 +262,70 @@ static func move_unit(source: TargetRef, target: TargetRef, range: int, flying: 
 ## Board animates the captured hex IDs without re-querying occupancy after the move.
 ## Bash-exit presentation is derived by HexCell from its previous layout, independently of this movement action.
 static func _apply_move_unit(source: TargetRef, target: TargetRef, range: int, flying: bool,
-		action_free: bool = false) -> bool:
+		action_free: bool, instigator: TargetRef) -> bool:
 	if not can_move(source, target, range, flying, action_free): return false
+	var unit := Match.get_unit(source.id)
+	var effective_range := unit.effective_action_values(&"fly" if flying else &"move", [range])[0]
+	var path: Array[int] = [unit.ihx, target.id]
+	if not flying: path = walk_path(unit.ihx, target.id, effective_range)
+	_finish_unit_move(source, target, &"fly" if flying else &"move", path, instigator)
+	return true
+
+## Verbs.relocate previews a deployed non-temple and a vacant destination, independent of its Walk/Fly abilities.
+static func can_relocate(source: TargetRef, target: TargetRef, instigator: TargetRef) -> bool:
+	return instigator != null and instigator.has_hex() and source != null and source.has_hex() \
+		and source.kind == TargetRef.Kind.UNIT and Match.get_unit(source.id).type != Enum.type.TEMPLE \
+		and target != null and target.kind == TargetRef.Kind.HEX and target.valid() and Match.occupants(target.id).is_empty()
+
+## Jester's fixed Flee checks a vacant, walkable destination even during declaration capture outside its own turn.
+static func can_flee_to(source: TargetRef, target: TargetRef, distance: int) -> bool:
+	if source == null or source.kind != TargetRef.Kind.UNIT or not source.has_hex(): return false
+	var mover := Match.get_unit(source.id)
+	var tile := _target_hex(target)
+	return mover.type != Enum.type.TEMPLE and tile != null and Match.occupant_sides(target.id, mover.player) == 0 \
+		and _can_land_move(mover.ihx, tile, distance, false, 0)
+
+## The fixed Flee verb commits a walk path without applying printed range upgrades or compulsory Bash.
+static func flee_to(source: TargetRef, target: TargetRef, distance: int) -> bool:
+	if not can_flee_to(source, target, distance): return false
+	Match.rules_runner.begin_boundary()
+	_finish_unit_move(source, target, &"move", walk_path(source.hex_id(), target.id, distance), null)
+	Match.rules_runner.end_boundary()
+	return true
+
+## Dormouse Bard moves the chosen unit onto the Return hex; self-relocation is distinct from moving another unit.
+static func relocate(source: TargetRef, target: TargetRef, instigator: TargetRef) -> bool:
+	if not can_relocate(source, target, instigator): return false
+	Match.rules_runner.begin_boundary()
+	_finish_unit_move(source, target, &"relocate", [source.hex_id(), target.id], instigator)
+	Match.rules_runner.end_boundary()
+	return true
+
+## Walk/Fly and relocations share position, Bash and control updates; only another unit's intervention publishes Shifted.
+static func _finish_unit_move(source: TargetRef, target: TargetRef, movement: StringName,
+		path: Array[int], instigator: TargetRef) -> void:
 	var unit := Match.get_unit(source.id)
 	var origin_hex := unit.ihx
 	var origin_control := ControlResolver.region_owner(Match.get_hex(origin_hex))
-	var effective_range := unit.effective_action_values(&"fly" if flying else &"move", [range])[0]
-	var path: Array[int] = [origin_hex, target.id]
-	if not flying: path = walk_path(origin_hex, target.id, effective_range)
+	var forced := instigator != null and not instigator.same(source)
 	unit.ihx = target.id
+	if forced: unit.last_displaced_turn = Match.turn_number
 	cancel_dodged_bashes(source.id)
 	var enemies := Match.occupants(target.id).filter(func(ref: TargetRef) -> bool:
 		return ref.id != source.id and Match.owner_of(ref) != unit.player)
-	if not enemies.is_empty(): _create_bash(source.id, enemies[0].id, target.id)
+	if not enemies.is_empty(): _create_bash(source.id, enemies[0].id, target.id, origin_hex)
 	var details := {"origin_hex": origin_hex, "destination_hex": target.id,
 		"origin_control": origin_control, "destination_control": ControlResolver.region_owner(Match.get_hex(target.id)),
-		"movement_kind": &"fly" if flying else &"move", "path": path}
-	Match.action_event.emit(EffectEvent.new(&"move", source, target, details))
+		"movement_kind": movement, "path": path, "started_bash": not enemies.is_empty()}
+	if forced:
+		details["cause"] = movement
+		details["instigator"] = instigator
+	var occurrence := &"shifted" if forced else (&"relocate" if movement == &"relocate" else &"move")
+	Match.action_event.emit(EffectEvent.new(occurrence, source, target, details))
 	Match.refresh_control()
 	Match.state_changed.emit()
-	return true
 
-## Implements declare_gore inside its public wrapper's mutation boundary.
+## Queues Gore contacts and gives any landing Bash its captured board origin before releasing followups.
 ## Captured followups run only after this operation finishes its cleanup.
 static func _apply_declare_gore(source: TargetRef, target: TargetRef, amount: int, range: int,
 		action_free: bool = false) -> bool:
@@ -255,7 +353,7 @@ static func _apply_declare_gore(source: TargetRef, target: TargetRef, amount: in
 	Match.get_unit(source.id).ihx = target.id
 	cancel_dodged_bashes(source.id)
 	var landing := Match.occupants(target.id).filter(func(unit: TargetRef) -> bool: return unit.id != source.id)
-	if not landing.is_empty(): _create_bash(source.id, landing[0].id, target.id)
+	if not landing.is_empty(): _create_bash(source.id, landing[0].id, target.id, original_hex)
 	Match.action_event.emit(occurrence)
 	Match.refresh_control()
 	Match.state_changed.emit()
@@ -286,9 +384,10 @@ static func displace(source: TargetRef, target: TargetRef, distance: int, range:
 	Match.rules_runner.end_boundary()
 	return result
 
-## Implements displacement and records its turn before creating a landing Bash; Banner Bearer reads this history without counters.
+## Implements displacement and records its turn and Bash origin before capture; Banner Bearer reads the turn without counters.
 ## The resolved event retains the actor hex as well as the recipient's old/new hexes for directional cosmetic playback.
 ## Captured followups run only after this operation finishes its cleanup.
+## Successful unit displacement emits Shifted with the displaced unit as subject and the mover as instigator.
 static func _apply_displace(source: TargetRef, target: TargetRef, distance: int, range: int,
 		pull: bool, action_free: bool = false) -> bool:
 	if not can_displace(source, target, distance, range, pull, action_free): return false
@@ -299,9 +398,13 @@ static func _apply_displace(source: TargetRef, target: TargetRef, distance: int,
 	Match.get_unit(target.id).ihx = destination
 	Match.get_unit(target.id).last_displaced_turn = Match.turn_number
 	cancel_dodged_bashes(target.id)
-	if not occupant.is_empty(): _create_bash(target.id, occupant[0].id, destination)
+	if not occupant.is_empty(): _create_bash(target.id, occupant[0].id, destination, old_hex)
 	Match.action_event.emit(EffectEvent.new(&"pull" if pull else &"push", source, target,
 		{"source_hex": source.hex_id(), "origin_hex": old_hex, "destination_hex": destination, "origin_control": origin_control}, &"resolved"))
+	# Shifted describes the displaced recipient, independently of the Push/Pull actor.
+	if destination != old_hex:
+		Match.action_event.emit(EffectEvent.new(&"shifted", target, TargetRef.hex(destination),
+			{"origin_hex": old_hex, "destination_hex": destination, "instigator": source, "cause": &"pull" if pull else &"push"}))
 	Match.refresh_control()
 	Match.state_changed.emit()
 	return true
@@ -349,13 +452,24 @@ static func _apply_displace_bomb(source: TargetRef, target: TargetRef, distance:
 ## Action.can_cannon() uses it to filter the distance selector's endpoint candidates.
 static func can_cannon(source: TargetRef, target: TargetRef, amount: int, range: int,
 		action_free: bool = false) -> bool:
-	var attacker := Match.get_unit(source.id) if source != null and source.kind == TargetRef.Kind.UNIT else null
-	if attacker != null:
-		var values := attacker.effective_action_values(&"cannon", [amount, range])
-		amount = values[0]
-		range = values[1]
-	if not _can_start_attack(source, target, amount, range, action_free): return false
-	return not _cannon_hexes(source.hex_id(), target.id, range).is_empty()
+	var attacker := _acting_unit(source, action_free)
+	if attacker == null: return false
+	var values := attacker.effective_action_values(&"cannon", [amount, range])
+	return values[0] >= 0 and _cannon_target(target, Match.get_hex(attacker.ihx).coordinate, values[1])
+
+## Checks a playable aligned endpoint for can_cannon() and pickers without building the shot's path.
+static func _cannon_target(target: TargetRef, origin: Vector2i, range: int) -> bool:
+	var tile := _target_hex(target)
+	return tile != null and _cannon_distance(origin, tile.coordinate, range) > 0
+
+## Shares Cannon source eligibility, damage and range across a picker without constructing any lines.
+static func prepare_cannon_targets(source: TargetRef, amount: int, range: int, _instant: bool,
+		_pierce: bool, action_free: bool) -> Callable:
+	var attacker := _acting_unit(source, action_free)
+	if attacker == null: return Callable()
+	var values := attacker.effective_action_values(&"cannon", [amount, range])
+	if values[0] < 0: return Callable()
+	return _cannon_target.bind(Match.get_hex(attacker.ihx).coordinate, values[1])
 
 ## Captures one Cannon record per playable hex along the chosen line.
 ## Action.cannon() invokes it after endpoint selection; empty hexes can catch later arrivals.
@@ -376,8 +490,10 @@ static func _apply_declare_cannon(source: TargetRef, target: TargetRef, amount: 
 	range = effective_values[1]
 	var owner := Match.owner_of(source)
 	var line := _cannon_hexes(source.hex_id(), target.id, range)
-	Match.action_event.emit(EffectEvent.new(&"cannon", source, target,
-		{"amount": amount, "pierce": pierce, "line": line.duplicate()}, &"target"))
+	var declaration := EffectEvent.new(&"cannon", source, target,
+		{"amount": amount, "pierce": pierce, "line": line.duplicate()}, &"target")
+	Match.action_event.emit(declaration)
+	var immediate: Array[CannonAttack] = []
 	for hex_id in line:
 		var attack := CannonAttack.new()
 		attack.owner = owner
@@ -386,9 +502,17 @@ static func _apply_declare_cannon(source: TargetRef, target: TargetRef, amount: 
 		attack.amount = amount
 		attack.instant = instant
 		attack.pierce = pierce
-		if instant: resolve_cannon(attack)
+		if instant: immediate.append(attack)
 		else: Match.pending_cannon_attacks.append(attack)
+	if instant and not Match.rules_runner.defer_reacted_attack(declaration, _resolve_instant_cannon.bind(immediate)):
+		_resolve_instant_cannon(immediate)
 	return true
+
+## Resolves the captured Instant line after declaration reactions, keeping its cell order and shared mutation boundary.
+static func _resolve_instant_cannon(attacks: Array[CannonAttack]) -> void:
+	Match.rules_runner.begin_boundary()
+	for attack in attacks: resolve_cannon(attack)
+	Match.rules_runner.end_boundary()
 
 ## Applies Cannon/Bomb damage; Cannon publishes shared Hit/Wound, while explosions retain the distinct bomb_hit event outside attack families.
 ## resolve_window() invokes this after Bow/Gore and before Fire; Pierce bypasses Obsidian and modifiers.
@@ -399,11 +523,13 @@ static func resolve_cannon(attack: CannonAttack) -> void:
 
 ## Implements resolve_cannon inside its public wrapper's mutation boundary.
 ## Captured followups run only after this operation finishes its cleanup.
+## Explosion events retain pre-resolution contact/chain eligibility so the board can skip silent cells even after victims or bombs leave.
 static func _apply_resolve_cannon(attack: CannonAttack) -> void:
 	if attack == null or attack.resolved: return
 	attack.resolved = true
 	var targets := Match.occupants(attack.target_hex)
 	var outcomes: Array[Dictionary] = []
+	var effective := attack.explosion and bomb_blast_effective(attack)
 	for ref in targets:
 		var unit := Match.get_unit(ref.id)
 		if not attack.pierce and unit.has_effective_flag(&"obsidian"):
@@ -428,7 +554,7 @@ static func _apply_resolve_cannon(attack: CannonAttack) -> void:
 	attack.outcome = {"targets": outcomes}
 	var event_name := &"bomb_explosion" if attack.explosion else &"cannon"
 	Match.action_event.emit(EffectEvent.new(event_name, TargetRef.unit(attack.source_id),
-		TargetRef.hex(attack.target_hex), {"outcome": attack.outcome.duplicate(true)}, &"resolved", attack.owner))
+		TargetRef.hex(attack.target_hex), {"outcome": attack.outcome.duplicate(true), "effective": effective}, &"resolved", attack.owner))
 
 ## Resolves a captured Gore hit if its original victim remains on the crossed hex.
 ## resolve_window() runs these after Bow and before Cannon; dead sources cancel their hits.
@@ -564,17 +690,17 @@ static func _apply_throw_bomb(source: TargetRef, target: TargetRef, amount: int,
 	Match.state_changed.emit()
 	return true
 
-## Checks that an inert Bomb is within the acting unit's range and can be removed.
+## Checks an inert bomb or a lit origin still awaiting its frozen combat batch; neighbouring blast cells are never Defuse targets.
 ## Action.can_defuse_bomb() uses the same range rule before target selection.
 static func can_defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
 	if not _can_start_attack(source, target, 0, range, action_free): return false
 	var origin := Match.get_hex(source.hex_id())
 	var destination := Match.get_hex(target.id)
-	return origin != null and destination != null and Match.bomb_at(target.id) != null \
+	return origin != null and destination != null and (Match.bomb_at(target.id) != null or not pending_lit_bomb(target.id).is_empty()) \
 		and DistanceSelector.hex_distance(origin.coordinate, destination.coordinate) <= range
 
-## Removes an inert bomb without triggering its blast.
+## Removes an inert bomb, or restores a lit bomb to unlit and cancels its pending area without refunding ignition costs.
 ## Action.defuse_bomb() calls this after the target remains legal at commit.
 static func defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
@@ -583,16 +709,42 @@ static func defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 	Match.rules_runner.end_boundary()
 	return result
 
-## Implements defuse_bomb inside its public wrapper's mutation boundary.
+## Commits Defuse within its boundary: restore lit origin metadata and retire its whole pending area, or remove one inert bomb.
 ## Captured followups run only after this operation finishes its cleanup.
 static func _apply_defuse_bomb(source: TargetRef, target: TargetRef, range: int,
 		action_free: bool = false) -> bool:
 	if not can_defuse_bomb(source, target, range, action_free): return false
+	var lit := pending_lit_bomb(target.id)
+	if not lit.is_empty():
+		var original: CannonAttack = lit[0]
+		var restored := Match.bomb_at(target.id)
+		if restored == null:
+			restored = BombInfo.new()
+			restored.hex_id = target.id
+			restored.owner = original.bomb_owner
+			restored.source_id = original.source_id
+			Match.bombs.append(restored)
+		restored.damage += original.amount
+		restored.pierce = restored.pierce or original.bomb_pierce
+		for attack in lit:
+			attack.resolved = true
+			attack.outcome = {"status": "defused"}
+			Match.pending_cannon_attacks.erase(attack)
+		Match.action_event.emit(EffectEvent.new(&"bomb_defuse", source, target, {"damage": original.amount, "restored_unlit": true}))
+		Match.state_changed.emit()
+		return true
 	var bomb := Match.bomb_at(target.id)
 	Match.bombs.erase(bomb)
 	Match.action_event.emit(EffectEvent.new(&"bomb_defuse", source, target, {"damage": bomb.damage}, &"resolved"))
 	Match.state_changed.emit()
 	return true
+
+## Defuse previews/commit share only unresolved public records for this exact origin; frozen/resolving blasts cannot be rewound.
+static func pending_lit_bomb(hex_id: int) -> Array[CannonAttack]:
+	var result: Array[CannonAttack] = []
+	for attack: CannonAttack in Match.pending_cannon_attacks:
+		if attack.explosion and not attack.resolved and attack.bomb_hex == hex_id: result.append(attack)
+	return result
 
 ## Removes a bomb and schedules a center-plus-adjacent magical area.
 ## Fire declaration calls it; fresh chain blasts are queued for a later response window.
@@ -602,17 +754,14 @@ static func ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant: bool)
 	Match.rules_runner.end_boundary()
 
 ## Implements ignite_bomb inside its public wrapper's mutation boundary.
-## Captures the Bomb center on each blast record for HexCell's pending lit marker.
+## Captures the Bomb center and lighting owner; ring order starts on that player's home side, goes counterclockwise, then resolves center.
 ## Captured followups run only after this operation finishes its cleanup.
 static func _apply_ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant: bool) -> void:
 	if bomb == null or not Match.bombs.has(bomb): return
 	Match.bombs.erase(bomb)
 	var center := Match.get_hex(bomb.hex_id)
 	if center == null: return
-	var adjacent := [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
-		Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
-	var area := [center.coordinate]
-	for direction in adjacent: area.append(center.coordinate + direction)
+	var area := bomb_blast_coordinates(center.coordinate, owner)
 	var source_id := bomb.source_id
 	for coordinate in area:
 		var target_hex := _hex_at_coordinate(coordinate)
@@ -626,6 +775,8 @@ static func _apply_ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant
 		attack.instant = instant
 		attack.explosion = true
 		attack.bomb_hex = bomb.hex_id
+		attack.bomb_owner = bomb.owner
+		attack.bomb_pierce = bomb.pierce
 		attack.chain_owner = 3 - owner
 		if instant: resolve_cannon(attack)
 		else: Match.pending_cannon_attacks.append(attack)
@@ -633,28 +784,65 @@ static func _apply_ignite_bomb(bomb: BombInfo, owner: int, pierce: bool, instant
 		TargetRef.hex(bomb.hex_id), {"damage": bomb.damage, "pierce": pierce}, &"resolved", owner))
 	Match.state_changed.emit()
 
-## Returns true for a deployed, current-player source with a valid target and available token.
-## Bow and Cannon legality checks share this invariant before adding action-specific geometry.
+## Bomb scheduling and focused regressions share the deterministic screen-counterclockwise order, independent of map array IDs.
+## P1 begins southwest, P2 southeast; missing board cells are filtered by the ignition caller and center finishes the sweep.
+static func bomb_blast_coordinates(origin: Vector2i, lighting_player: int) -> Array[Vector2i]:
+	var directions: Array[Vector2i] = [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
+		Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
+	var result: Array[Vector2i] = []
+	var first := 4 if lighting_player == 1 else 0
+	for index in 6: result.append(origin + directions[(first + index) % 6])
+	result.append(origin)
+	return result
+
+## Presentation copies only effective blast cells at the frozen window: eligible contact (even zero damage) or an inert chain bomb.
+## This read-only helper never narrows authoritative area targets; immune-only/empty cells remain valid silent rule resolutions.
+static func bomb_blast_effective(attack: CannonAttack) -> bool:
+	if Match.bomb_at(attack.target_hex) != null: return true
+	for ref in Match.occupants(attack.target_hex):
+		var unit := Match.get_unit(ref.id)
+		if attack.pierce or not unit.has_effective_flag(&"obsidian"): return true
+	return false
+
+## Combines source eligibility, a playable hex and nonnegative parameters for
+## Bomb and displacement legality before their action-specific checks.
 static func _can_start_attack(source: TargetRef, target: TargetRef, amount: int, range: int,
 		action_free: bool) -> bool:
-	if source == null or target == null or source.kind != TargetRef.Kind.UNIT or target.kind != TargetRef.Kind.HEX:
-		return false
-	if amount < 0 or range < 0 or not source.has_hex() or not target.valid(): return false
-	var owner := Match.owner_of(source)
-	return Match.winner == 0 and Match.players.has(owner) and (Match.rules_runner.is_triggered() or (owner == Match.active_player \
-		and Match.phase == Match.Phase.ACTION \
-		and (Match.players[owner].actions_remaining > 0 or action_free)))
+	return amount >= 0 and range >= 0 and _target_hex(target) != null and _acting_unit(source, action_free) != null
+
+## Checks source timing and location once for a legality query. Triggered actions
+## bypass the normal Action window and token checks, as in the individual verb rules.
+static func _acting_unit(source: TargetRef, action_free: bool) -> UnitInfo:
+	if Match.winner != 0 or source == null or source.kind != TargetRef.Kind.UNIT: return null
+	var unit := Match.get_unit(source.id)
+	if unit == null or unit.t_state != Enum.t_state.DEPLOYED or Match.get_hex(unit.ihx) == null: return null
+	var owner := unit.player
+	if not Match.players.has(owner): return null
+	if Match.rules_runner.is_triggered(): return unit
+	if owner != Match.active_player or Match.phase != Match.Phase.ACTION: return null
+	return unit if action_free or Match.players[owner].actions_remaining > 0 else null
+
+## Checks and resolves a spatial candidate for movement and ranged legality.
+static func _target_hex(target: TargetRef) -> HexInfo:
+	return Match.get_hex(target.id) if target != null and target.kind == TargetRef.Kind.HEX else null
+
+## Shared endpoint geometry for Cannon preview and line construction.
+static func _cannon_distance(origin: Vector2i, destination: Vector2i, max_range: int) -> int:
+	var delta := destination - origin
+	if delta.x != 0 and delta.y != 0 and delta.x + delta.y != 0: return 0
+	var distance := DistanceSelector.hex_distance(origin, destination)
+	return distance if distance <= max_range else 0
 
 ## Produces playable hexes along one of six axial directions, excluding the source.
-## Cannon legality and declaration both call it, so preview and committed line geometry match.
+## Cannon declaration calls this after the same endpoint geometry has passed preview.
 static func _cannon_hexes(source_hex: int, target_hex: int, max_range: int) -> Array[int]:
 	var result: Array[int] = []
 	var source := Match.get_hex(source_hex)
 	var target := Match.get_hex(target_hex)
 	if source == null or target == null: return result
 	var delta := target.coordinate - source.coordinate
-	var distance := DistanceSelector.hex_distance(source.coordinate, target.coordinate)
-	if distance == 0 or distance > max_range or not (delta.x == 0 or delta.y == 0 or delta.x + delta.y == 0): return result
+	var distance := _cannon_distance(source.coordinate, target.coordinate, max_range)
+	if distance == 0: return result
 	var step := Vector2i(signi(delta.x), signi(delta.y))
 	for distance_step in range(1, distance + 1):
 		var coordinate := source.coordinate + step * distance_step
@@ -679,21 +867,26 @@ static func _bow_details(attack: BowAttack) -> Dictionary:
 ## Checks Fire source timing, effective damage, target domain, and enemy-or-empty occupancy.
 ## Action.can_fire() calls this before selection and commit; Action-free only exempts the token.
 static func can_fire(source: TargetRef, target: TargetRef, amount: int, action_free: bool = false) -> bool:
-	var attacker := Match.get_unit(source.id) if source != null and source.kind == TargetRef.Kind.UNIT else null
-	if attacker != null: amount = attacker.effective_action_values(&"fire", [amount, 0])[0]
-	if Match.winner != 0 or source == null or target == null or amount < 0:
-		return false
-	if source.kind != TargetRef.Kind.UNIT or target.kind != TargetRef.Kind.HEX:
-		return false
-	if not source.has_hex() or not target.valid():
-		return false
-	var owner := Match.owner_of(source)
-	if not Match.players.has(owner) or (not Match.rules_runner.is_triggered() and (owner != Match.active_player or Match.phase != Match.Phase.ACTION)):
-		return false
-	if not Match.rules_runner.is_triggered() and Match.players[owner].actions_remaining <= 0 and not action_free: return false
-	var occupants := Match.occupants(target.id)
-	# Empty hexes are valid; a shared hex targets the opposing participant.
-	return occupants.is_empty() or enemy_on(target.id, owner) != null or Match.bomb_at(target.id) != null
+	var attacker := _acting_unit(source, action_free)
+	return attacker != null and attacker.effective_action_values(&"fire", [amount, 0])[0] >= 0 \
+		and _fire_target(target, attacker.player)
+
+## Checks Fire's destination after source eligibility. Enemy, shared, and vacant hexes
+## are legal, and a bomb permits Fire even on a friendly-only hex.
+static func _fire_target(target: TargetRef, owner: int, occupied: Variant = null) -> bool:
+	return _target_hex(target) != null and (_landing_sides(target.id, owner, occupied) != Match.OCCUPIED_BY_OWNER \
+		or Match.bomb_at(target.id) != null)
+
+## Reads occupant sides live for a committed check or from the current read-only picker view.
+static func _landing_sides(hex_id: int, owner: int, occupied: Variant) -> int:
+	return Match.occupant_sides(hex_id, owner) if occupied == null else int(occupied.get(hex_id, 0))
+
+## Shares Fire source eligibility and effective damage across the current picker.
+static func prepare_fire_targets(source: TargetRef, amount: int, _instant: bool, _pierce: bool,
+		action_free: bool) -> Callable:
+	var attacker := _acting_unit(source, action_free)
+	if attacker == null or attacker.effective_action_values(&"fire", [amount, 0])[0] < 0: return Callable()
+	return _fire_target.bind(attacker.player, Match.occupant_sides_by_hex(attacker.player))
 
 static func enemy_on(hex_id: int, owner: int) -> TargetRef:
 	for ref in Match.occupants(hex_id):
@@ -736,9 +929,13 @@ static func _apply_declare_fire(source: TargetRef, target: TargetRef, amount: in
 	var bomb := Match.bomb_at(target.id)
 	if bomb == null and not instant: Match.pending_attacks.append(attack)
 	Match.fire.emit(source, target, amount)
-	Match.action_event.emit(EffectEvent.new(&"fire", source, target, attack.details(), &"target"))
-	if bomb != null: ignite_bomb(bomb, attack.owner, pierce, instant)
-	elif instant: resolve_fire(attack)
+	var declaration := EffectEvent.new(&"fire", source, target, attack.details(), &"target")
+	Match.action_event.emit(declaration)
+	if bomb != null:
+		var ignition := ignite_bomb.bind(bomb, attack.owner, pierce, instant)
+		if not instant or not Match.rules_runner.defer_reacted_attack(declaration, ignition): ignition.call()
+	elif instant and not Match.rules_runner.defer_reacted_attack(declaration, resolve_fire.bind(attack)):
+		resolve_fire(attack)
 	Match.state_changed.emit()
 	return true
 
@@ -872,46 +1069,61 @@ static func cancel_dodged_bashes(unit_id: int) -> void:
 		Match.action_event.emit(EffectEvent.new(&"bash", TargetRef.unit(bash.attacker_id),
 			TargetRef.unit(bash.defender_id), {"cancelled": true, "dodged": true, "defender_fled": unit_id == bash.defender_id and unit_ref.has_hex(), "hex": bash.target_hex}, &"resolved"))
 
-## Finds a path of at most range steps through playable, unoccupied intermediate hexes.
-## Move validation calls this; the occupied destination is allowed only as the final step.
-static func _has_free_move_path(origin_hex: int, destination_hex: int, range: int) -> bool:
-	return not walk_path(origin_hex, destination_hex, range).is_empty()
-
 ## Returns one deterministic shortest Walk path including origin/destination, or empty if blocked.
-## Move legality and _apply_move_unit share this BFS; only the final tile may be occupied.
+## Move legality and _apply_move_unit share the adjacent step and BFS rules; only the final tile may be occupied.
+## Longer committed paths rebuild predecessors from live occupancy.
 static func walk_path(origin_hex: int, destination_hex: int, range: int) -> Array[int]:
 	var empty: Array[int] = []
 	var origin := Match.get_hex(origin_hex)
 	var destination := Match.get_hex(destination_hex)
 	if origin == null or destination == null or range < 1 or origin_hex == destination_hex: return empty
-	var queue: Array[Vector2i] = [origin.coordinate]
-	var distances: Dictionary = {}
-	var previous: Dictionary = {}
-	distances[origin.coordinate] = 0
+	var steps_to_target := DistanceSelector.hex_distance(origin.coordinate, destination.coordinate)
+	if steps_to_target == 1: return [origin_hex, destination_hex]
+	if steps_to_target > range: return empty
+	var previous := _walk_predecessors(origin_hex, range, destination_hex, Match.occupant_sides_by_hex(0))
+	if not previous.has(destination_hex): return empty
+	var path: Array[int] = []
+	var current := destination_hex
+	while current != origin_hex:
+		path.append(current)
+		current = previous[current]
+	path.append(origin_hex)
+	path.reverse()
+	return path
+
+## Shared breadth-first Walk search for live paths and whole pickers.
+## Reached occupied hexes can be destinations, but they never enter the traversal queue.
+## A specified destination stops the search as soon as its shortest path is found.
+static func _walk_predecessors(origin_hex: int, range: int, destination_hex: int,
+		occupied: Dictionary[int, int]) -> Dictionary[int, int]:
+	var hex_at := {}
+	for tile in Match.map:
+		if tile != null and not hex_at.has(tile.coordinate): hex_at[tile.coordinate] = tile.hex_id
+	var queue: Array[int] = [origin_hex]
+	var distances: Array[int] = [0]
+	var previous: Dictionary[int, int] = {origin_hex: origin_hex}
 	var neighbors: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1),
 		Vector2i(0, -1), Vector2i(1, -1), Vector2i(-1, 1)]
-	while not queue.is_empty():
-		var current: Vector2i = queue.pop_front()
-		var steps: int = distances[current]
+	var head := 0
+	while head < queue.size():
+		var current := queue[head]
+		var steps := distances[head]
+		head += 1
 		if steps >= range: continue
+		var coordinate := Match.get_hex(current).coordinate
 		for direction: Vector2i in neighbors:
-			var next := current + direction
-			if distances.has(next): continue
-			var next_hex := _hex_at_coordinate(next)
-			if next_hex < 0: continue
-			previous[next_hex] = _hex_at_coordinate(current)
-			if next_hex == destination_hex:
-				var path: Array[int] = [destination_hex]
-				while path[0] != origin_hex: path.push_front(previous[path[0]])
-				return path
-			if not Match.occupants(next_hex).is_empty(): continue
-			distances[next] = steps + 1
-			queue.append(next)
-	return empty
+			var next_hex: int = hex_at.get(coordinate + direction, -1)
+			if next_hex < 0 or previous.has(next_hex): continue
+			previous[next_hex] = current
+			if next_hex == destination_hex: return previous
+			if occupied.has(next_hex): continue
+			queue.append(next_hex)
+			distances.append(steps + 1)
+	return previous
 
 ## Records a Bash that will resolve after the opponent has had a response turn.
-## Movement, Gore, Push/Pull and Match.deploy_from_effect call this when their destination contains an enemy.
-static func _create_bash(attacker_id: int, defender_id: int, hex_id: int) -> void:
+## Walk/Fly, Gore and Push/Pull pass the attacker's departure hex; deployment has no board origin.
+static func _create_bash(attacker_id: int, defender_id: int, hex_id: int, origin_hex: int = -1) -> void:
 	if _bash_at(hex_id): return
 	var bash := BashInfo.new()
 	bash.attacker_id = attacker_id
@@ -924,7 +1136,7 @@ static func _create_bash(attacker_id: int, defender_id: int, hex_id: int) -> voi
 	bash.responding_player = Match.active_player if fast else 3 - Match.active_player
 	Match.bashes.append(bash)
 	Match.action_event.emit(EffectEvent.new(&"bash", TargetRef.unit(attacker_id),
-		TargetRef.unit(defender_id), {"hex": hex_id}, &"target"))
+		TargetRef.unit(defender_id), {"hex": hex_id, "origin_hex": origin_hex}, &"target"))
 
 ## Applies a physical contact and captures Hit/Wound before death removes participants.
 ## Bow/Gore/Bash call inside mutation boundaries; the shared publisher also handles magical contact without consuming physical shields.

@@ -1,10 +1,10 @@
 class_name Verbs
 extends RefCounted
 
-## Movement-trigger support grants one recipient a pair of modifiers through the captured current End cleanup.
-static func grant_modifiers(physical: int, magical: int) -> Effect.Verb:
+## Grants recipient modifiers through End; the paid Berserker command requests separate stacking grants through enemy End.
+static func grant_modifiers(physical: int, magical: int, enemy_end: bool = false, stack: bool = false) -> Effect.Verb:
 	return Effect.Verb.new(&"grant_modifiers", Action.grant_modifiers, Action.can_grant_modifiers,
-		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [physical, magical])
+		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [physical, magical, enemy_end, stack])
 
 ## Sacrifice is an atomic UNIT cost; the author supplies explicit eligibility and the shared cost ledger prevents duplicate payment.
 static func sacrifice() -> Effect.Verb:
@@ -60,9 +60,19 @@ static func upgrade_ability(damage: int, range: int) -> Effect.Verb:
 	return Effect.Verb.new(&"upgrade_ability", WoodlandActions.upgrade_ability, WoodlandActions.can_upgrade_ability,
 		TargetRef.Kind.UNIT, TargetRef.Kind.PROPERTY, [damage, range])
 
-## Wild Mole Rat's Flee grants a free use of its own movement; normal movement legality determines destinations.
-static func flee() -> Effect.Verb:
-	return Effect.Verb.new(&"flee", WoodlandActions.flee, WoodlandActions.can_flee, TargetRef.Kind.UNIT, TargetRef.Kind.HEX)
+## Flee grants a free use of the recipient's movement unless the card supplies a fixed Walk distance.
+## The execution source distinguishes self-initiated Flee from movement ordered by another unit.
+static func flee(distance: int = 0) -> Effect.Verb:
+	if distance > 0:
+		return Effect.Verb.new(&"flee", CombatResolver.flee_to, CombatResolver.can_flee_to,
+			TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [distance])
+	return Effect.Verb.new(&"flee", WoodlandActions.flee, WoodlandActions.can_flee,
+		TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [RuleBinding.new(&"", RuleBinding.Field.SOURCE)])
+
+## Dormouse Bard supplies a recorded Return hex; the chosen unit is moved by the effect's source.
+static func relocate() -> Effect.Verb:
+	return Effect.Verb.new(&"relocate", CombatResolver.relocate, CombatResolver.can_relocate,
+		TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [RuleBinding.new(&"", RuleBinding.Field.SOURCE)])
 
 ## Chooses a UNIT in hand and marks it defeated; target selectors specify friendly, enemy or explicit ownership as usual.
 ## PhraseExecution owns CHOOSE_ONE selection, including off-board hand choices; no deployment/death action is implied.
@@ -130,24 +140,24 @@ static func up_life(actual_delta: int, max_delta: int) -> Effect.Verb:
 		TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [actual_delta, max_delta])
 
 ## Defines Fire's damage, timing, Pierce, and optional action-token sticker.
-## Collection.fire_DR() supplies these values; PhraseExecution passes them to CombatResolver.
+## Collection.fire_DR() supplies these values; Fire pickers share source and damage checks through CombatResolver.
 static func fire(amount: int, instant: bool = false, pierce: bool = false, action_free: bool = false) -> Effect.Verb:
 	return Effect.Verb.new(&"fire", Action.fire, Action.can_fire, TargetRef.Kind.UNIT, TargetRef.Kind.HEX,
-		[amount, instant, pierce, action_free])
+		[amount, instant, pierce, action_free], CombatResolver.prepare_fire_targets)
 
 ## Defines physical Bow damage, range, and the supported Instant/Pierce stickers.
-## Card effects use a HEX selector; Action.bow() captures the attack in CombatResolver.
+## Bow pickers share the source and live range check; Action.bow() captures the committed attack.
 static func bow(amount: int, range: int, instant: bool = false, pierce: bool = false,
 		action_free: bool = false) -> Effect.Verb:
 	return Effect.Verb.new(&"bow", Action.bow, Action.can_bow, TargetRef.Kind.UNIT, TargetRef.Kind.HEX,
-		[amount, range, instant, pierce, action_free])
+		[amount, range, instant, pierce, action_free], CombatResolver.prepare_bow_targets)
 
 ## Defines a straight-line magical Cannon action that can affect either player.
-## A radius selector proposes endpoints; CombatResolver validates alignment and captures the line.
+## A radius selector proposes endpoints; one prepared check supplies their common source and range.
 static func cannon(amount: int, range: int, instant: bool = false, pierce: bool = false,
 		action_free: bool = false) -> Effect.Verb:
 	return Effect.Verb.new(&"cannon", Action.cannon, Action.can_cannon, TargetRef.Kind.UNIT, TargetRef.Kind.HEX,
-		[amount, range, instant, pierce, action_free])
+		[amount, range, instant, pierce, action_free], CombatResolver.prepare_cannon_targets)
 
 ## Defines an inert Bomb placement/merge at a chosen HEX.
 ## Collection.bomb_DR() uses it; the bomb remains until lit or defused.
@@ -169,13 +179,13 @@ static func gore(amount: int, range: int, action_free: bool = false) -> Effect.V
 		TargetRef.Kind.HEX, [amount, range, action_free])
 
 ## Defines immediate Walk/Move or Fly to a chosen HEX within the supplied range.
-## The boolean selects path-blocking Move versus occupancy-ignoring Fly.
+## The boolean selects path-blocking Move versus occupancy-ignoring Fly, including for prepared picker checks.
 static func movement(range: int, flying: bool = false, action_free: bool = false) -> Effect.Verb:
 	if flying:
 		return Effect.Verb.new(&"fly", Action.fly, Action.can_fly, TargetRef.Kind.UNIT,
-			TargetRef.Kind.HEX, [range, action_free])
+			TargetRef.Kind.HEX, [range, action_free], CombatResolver.prepare_move_targets.bind(true))
 	return Effect.Verb.new(&"move", Action.move, Action.can_move, TargetRef.Kind.UNIT,
-		TargetRef.Kind.HEX, [range, action_free])
+		TargetRef.Kind.HEX, [range, action_free], CombatResolver.prepare_move_targets.bind(false))
 
 ## Defines an immediate allied healing action with amount and range fixed in its definition.
 ## Collection.mend_DR() binds the shared activity cost and ally selector.
@@ -219,8 +229,11 @@ static func pull_bomb(distance: int, range: int, action_free: bool = false) -> E
 	return Effect.Verb.new(&"pull_bomb", Action.displace_bomb, Action.can_displace_bomb,
 		TargetRef.Kind.UNIT, TargetRef.Kind.HEX, [distance, range, true, action_free])
 
-static func shield(amount: int) -> Effect.Verb:
-	return Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false])
+## Standard Shield protects friends. The enemy-hero variant may also be an explicit atomic cost.
+static func shield(amount: int, enemy_hero: bool = false) -> Effect.Verb:
+	var result := Effect.Verb.new(&"shield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, false, enemy_hero])
+	result.atomic_cost = enemy_hero
+	return result
 
 static func mshield(amount: int) -> Effect.Verb:
 	return Effect.Verb.new(&"mshield", Action.shield, Action.can_shield, TargetRef.Kind.UNIT, TargetRef.Kind.UNIT, [amount, true])

@@ -1,12 +1,16 @@
 # Opt-in regression routines
 
-2026-10-30 spritesheet migration: the asset-cache and roster regressions were
-updated for shared atlases and exclusion of legacy art. They have not been rerun
-since that migration; the completed results below describe the preceding code.
-Editor import and script/resource loading passed separately. See
-[CHARACTER_SHEETS.md](CHARACTER_SHEETS.md) for the updated runtime caller map.
+The character-cache regression uses shipped atlases for its required checks and
+compares original PNGs when available. It can run on a checkout without the
+editable frames. See [CHARACTER_SHEETS.md](CHARACTER_SHEETS.md) for the caller map.
 
-Latest completed run: **2026-10-29 — 15/15 suites passed, zero failures** using
+Hand state and rule-query regression, **2026-11-08**. The 19 gameplay and
+presentation suites passed with Godot 4.7.2 in
+`.tools/test-runs/20261108T221312356376Z/results.json`. The separate
+`character_cache_test` failed to load in that run due to a removed runtime
+constant. The repaired fixture owns the optional source path.
+
+Previous completed run: **2026-10-29 — 15/15 suites passed, zero failures** using
 the bundled headless engine. Full evidence is retained at
 `.tools/test-runs/20261029T133619439329Z/results.json` with a separate complete
 output log for each scene. This includes all 83 appearances/166 owner-specific
@@ -17,12 +21,13 @@ run during editor import or ordinary gameplay.
 
 ```powershell
 python tools/run_tests.py
+python tools/run_tests.py character_cache_test
 python tools/run_tests.py adventurer_units_test adventurer_synergies_test
 python tools/run_tests.py --godot "C:/path/to/Godot_console.exe"
 ```
 
 The default engine is the bundled Godot 4.5.1 console build under `.tools/godot`.
-With no scene names, the runner discovers all fifteen `tests/*_test.tscn` scenes.
+With no scene names, the runner discovers all `tests/*_test.tscn` scenes.
 Each is a separate headless process with isolated APPDATA/LOCALAPPDATA, so it
 cannot load/overwrite the player's real save. The timeout is 180 seconds per
 scene (`--timeout` changes it); sprite-cache verification can take two minutes.
@@ -37,11 +42,12 @@ A script exception cannot be hidden by a scene that eventually exits zero.
 
 | Scene | Coverage |
 | --- | --- |
-| `full_roster_test` | All 83 sprite-backed units for both owners: unique IDs, legacy prefixes, every cost/event/consequence contract, movement defaults, hero choice and snapshots. |
+| `full_roster_test` | All 106 sprite-backed units for both owners, including stable IDs, rule contracts, movement defaults, hero choice and snapshots. |
+| `frontier_units_test` | Both Frontier batches, including Ember/Sacrifice capture, the two movement occurrences, pre-impact Flee, Shield counters, wounded control, the Stun threshold and written resource payments. |
 | `adventurer_units_test` | All 20 new cards: printed effects, ownership/range exclusions, atomic payments, modifiers, Return/Revive, counters and next-Fire stickers. |
 | `adventurer_synergies_test` | Nine managed multi-card chains listed below. |
 | `synergy_units_test` | Earlier 28-card block: ammunition, contact rewards, control/thresholds, transfer, sacrifice, trigger suppression, Bash allowances and activity exclusions. |
-| `rat_effects_test` | Rat effects, Reset/Return, Copy categories, Disable, life provenance, no-command loss and non-trigger cases. |
+| `rat_effects_test` | Rat effects, clean Return/Revive and legacy hand snapshots, fresh redeployment, Wild Rat predicate counts, Copy categories, Disable, life provenance and no-command loss. |
 | `woodland_effects_test` | Growth, Bomb/contact payoffs, Flee, upgrades and life/resource payments. |
 | `wild_return_test` | Wild Return cards, variable counter costs and effect redeployment. |
 | `disable_units_test` | Wild Mara/Tamia/Grey Squirrel engines, ownership and timed Bow grants. |
@@ -49,9 +55,13 @@ A script exception cannot be hidden by a scene that eventually exits zero.
 | `selection_test` | Reference domains, shared-hex identities, projections, CHOOSE_ONE/ALL, stale choices and exactly-once execution. |
 | `m2_test` | Costs, captured trigger choices, continuations and board/execution handoff. |
 | `trigger_state_test` | Event matching, continuous state and trigger ordering. |
-| `local_match_test` | Deployment, actions, turn lifecycle and local controller. |
-| `presentation_test` | Actual game scene: cosmetic replay, HUD/save/reset, choices and presentation/rules separation. |
-| `character_cache_test` | Every mapped atlas: shared-sheet identity, original canvas sizes, exact source/packed PNG pixels, bounds/feet and no legacy portrait fallback. |
+| `local_match_test` | Deployment, required hero redeployment, loss when no deployment counter remains, actions, and turn lifecycle. |
+| `simulation_snapshot_test` | In-memory match restoration, counter and queued Fire isolation, deterministic ID allocation, and alternate branches of an opponent-owned pending trigger. |
+| `tactical_heuristic_test` | Safety before weighted value, lethal Bash reach, readiness, a friendly answer to a ranged attacker, Fire versus Cannon injury, legal dodges against a queued Bow, and scoring bundled sacrifice costs. |
+| `mcts_search_test` | Heuristic-first expansion, admission of every legal option, simulation evidence overriding the initial ranking, and separate backup of truncated-rollout estimates. |
+| `menu_flows_test` | Saved-deck selection fills the centre column and the match result appears after terminal hero feedback. |
+| `presentation_test` | Actual game scene: cosmetic replay, HUD/save/reset, and the Bash order from split Slash and life reveal through Skull, departure and recentering. |
+| `character_cache_test` | Shipped atlas regions, cached texture identity, portraits, measured alpha bounds and feet, legacy fallback exclusion, and pixel comparison for originals available on disk. |
 
 The new cross-roster scene checks:
 

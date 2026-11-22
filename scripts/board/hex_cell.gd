@@ -22,6 +22,7 @@ const BOMB_ICON := "res://assets/icons/board/bomb-unlit.png"
 ## Normal Bomb placement/travel and historical replays share the same target-relative endpoint.
 const BOMB_OFFSET: Vector2 = preload("res://scripts/board/board_fire.gd").TARGET_OFFSETS[&"bomb_throw"]
 const INFO_FONT_SIZE := 31
+const EFFECT_FONT_SIZE := INFO_FONT_SIZE
 const INFO_ROW_SPACER := "[img=1x60]res://assets/icons/ui/info-row-spacer.png[/img]"
 @onready var frame := $HexFrame
 @onready var unit_figures: Node2D = $UnitFigures
@@ -65,6 +66,8 @@ var bash_departure_offsets: Dictionary = {}
 var bash_exit_offsets: Dictionary = {}
 var bash_exit_progress := 1.0
 var bash_exit_tween: Tween
+## The authoritative Bash has ended, but this cell still shows its participants for finite damage feedback.
+var bash_feedback_held := false
 
 ## Connects pointer handling and paints the current tile after the scene enters the tree.
 ## Godot calls this after setup() has received its HexInfo.
@@ -142,7 +145,7 @@ func set_board_position(value: Vector2) -> void:
 ## Retains ordinary characters and forwards the selected identity for cursor-facing; arrival visuals stay cosmetic.
 ## Life rows use Board.life_number so damage appears during Slash rather than at authoritative mutation time.
 ## Activity is shown through figure color rather than a Stun counter row in compact hex info.
-## Any live-Bash-to-ordinary transition captures old side offsets and recenters surviving figures/info independently of the action causing it.
+## A Bash ending during damage keeps its split layout through Slash, life reveal and Skull. Other exits recenter immediately.
 ## Regional rim colors queue separately from rules and settle only after finite Board presentations; target highlights remain immediate.
 func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	if hex_info == null: return
@@ -165,8 +168,18 @@ func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	var units := _current_units()
 	var bash := _live_bash(units)
 	if rendered_bash != null and bash == null:
+		if _has_rendered_bash_feedback():
+			if not bash_feedback_held:
+				bash_feedback_held = true
+				_stop_hover_tweens()
+				if bash_focus_tween != null: bash_focus_tween.kill()
+				for box in bash_click_boxes: box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_refresh_life_numbers()
+			return
+		bash_feedback_held = false
 		_begin_bash_exit(units)
 	elif bash != null and bash != rendered_bash:
+		bash_feedback_held = false
 		if bash_exit_tween != null: bash_exit_tween.kill()
 		bash_exit_offsets.clear()
 		bash_exit_progress = 1.0
@@ -183,7 +196,7 @@ func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	bash_hover_side = -1
 	displayed_life_rows.clear()
 	var life_lines: PackedStringArray = []
-	var modifier_lines: PackedStringArray = []
+
 	var effect_lines: PackedStringArray = []
 	if bash != null:
 		_render_bash(bash)
@@ -193,29 +206,45 @@ func refresh(highlighted: bool = false, selected_unit_id: int = -1) -> void:
 	var remaining_effect_rows := 3
 	for index in units.size():
 		var unit := units[index]
-		var owner_color := "#ef4444" if unit.player == 1 else "#3b82f6"
-		var life_line := _life_row(unit, owner_color)
+		var life_line := _life_row(unit)
 		displayed_life_rows[unit.iun] = life_line
 		life_lines.append(life_line)
-		var physical_text := ("+" if unit.physical_modifier >= 0 else "") + str(unit.physical_modifier)
-		var modifier_line := "[font_size=%d][color=%s]%s[/color]" % [INFO_FONT_SIZE, owner_color, physical_text]
-		if unit.magical_modifier != 0:
-			var magical_text := ("+" if unit.magical_modifier > 0 else "") + str(unit.magical_modifier)
-			modifier_line += "[color=#c084fc]%s[/color]" % magical_text
-		modifier_lines.append(modifier_line + "[/font_size]")
 		var summary := _compact_effect_summary(unit, remaining_effect_rows)
 		if not summary.is_empty():
-			effect_lines.append("[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [INFO_FONT_SIZE, summary])
+			effect_lines.append("[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [EFFECT_FONT_SIZE, summary])
 			remaining_effect_rows -= summary.count("\n") + 1
 		_add_unit_figure(unit, index, units.size(), unit.iun == selected_unit_id)
 	var contents := life_lines
-	contents.append_array(modifier_lines)
 	contents.append_array(effect_lines)
 	$CoordinateLabel.text = _fixed_info_rows("\n".join(contents))
 	for unit in units: last_unit_info[unit.iun] = $CoordinateLabel.text
 	_apply_bash_exit_progress(bash_exit_progress)
 	set_arrival(arriving_unit_id, arrival_alpha)
 	if is_hovered: _start_hover_oscillation()
+
+## Board selection and phrase callbacks update rims and figure focus without rebuilding card text or art.
+func refresh_selection(highlighted: bool, selected_unit_id: int) -> void:
+	if targetable != highlighted:
+		targetable = highlighted
+		_apply_target_transform()
+		_refresh_target_color()
+	if focused_unit_id == selected_unit_id: return
+	var previous_unit_id := focused_unit_id
+	focused_unit_id = selected_unit_id
+	if bash_feedback_held: return
+	for figure: Sprite2D in unit_figures.get_children():
+		var unit_id := int(figure.get_meta("unit_id"))
+		if unit_id != previous_unit_id and unit_id != selected_unit_id: continue
+		var selected := unit_id == selected_unit_id
+		if figure is BoardCharacter:
+			figure.set_follow_pointer(selected)
+		elif rendered_bash == null:
+			figure.modulate = Color(1.08, 1.08, 1.08) if selected else Color.WHITE
+
+## Refresh and the frame loop consult Board for the exact encounter's remaining damage presentation.
+func _has_rendered_bash_feedback() -> bool:
+	var owner_board := get_parent().get_parent() as GuerraBoard
+	return owner_board != null and owner_board.has_bash_damage_feedback(rendered_bash)
 
 ## Ordinary refresh(), Bash stats and Bash details use the same invisible row strut, as tall as the largest icon.
 ## Text-only, heart, Stun and Fire lines therefore share line metrics; walking ghosts retain the formatted BBCode unchanged.
@@ -257,13 +286,21 @@ func bash_arrival_offset(identifier: int) -> Vector2:
 	if unit == null: return Vector2.ZERO
 	return Vector2(-65.0 if unit.player == 1 else 65.0, 0.0)
 
-## Board's walk presenter moves the defender from its original center to its Bash side during the final step.
-## Repeated refreshes preserve this position; _finish_walk supplies 1 to settle interrupted arrivals as well.
-func set_bash_approach(identifier: int, progress: float) -> void:
-	if bash_arrival_offset(identifier) == Vector2.ZERO: return
+## Board's walk presenter drives both Bash labels from the same frame positions as the approaching sprites.
+## _finish_walk supplies 1 and the settled offset when the travelling sprite is released.
+func set_bash_approach(identifier: int, progress: float, attacker_offset: Vector2 = Vector2.ZERO) -> void:
+	var side_offset := bash_arrival_offset(identifier)
+	if side_offset == Vector2.ZERO: return
+	var defender_offset := side_offset * (1.0 - smoothstep(0.0, 1.0, progress))
 	for figure in unit_figures.get_children():
 		if figure is BoardCharacter and figure.unit_id == rendered_bash.defender_id:
-			figure.position.x = -bash_arrival_offset(identifier).x * smoothstep(0.0, 1.0, progress)
+			figure.position.x = -side_offset.x + defender_offset.x
+	for overlay in bash_overlays:
+		var unit_id := int(overlay.get_meta("unit_id", -1))
+		if unit_id == identifier:
+			overlay.position = Vector2(overlay.get_meta("bash_rest_position")) + attacker_offset
+		elif unit_id == rendered_bash.defender_id and BoardCharacter.supports(Match.get_unit(unit_id)):
+			overlay.position = Vector2(overlay.get_meta("bash_rest_position")) + defender_offset
 
 ## refresh() notices a Bash ending for any reason, capturing old side poses before the ordinary layout replaces them.
 ## Surviving figures recenter and ordinary info fades in over 0.8s; movement presenters consume the departed side offset separately.
@@ -298,15 +335,19 @@ func take_bash_departure_offset(identifier: int) -> Vector2:
 	return saved.offset
 
 ## The Bash-exit tween and refresh() apply the same progress, preserving motion across unrelated repaints.
-## Only units still on this ordinary tile shift; a new Bash owns its own layout and stops this transition.
+## The ordinary info follows the surviving figure's horizontal offset as it recenters.
 func _apply_bash_exit_progress(progress: float) -> void:
 	bash_exit_progress = progress
 	if rendered_bash != null: return
+	var remaining := 1.0 - smoothstep(0.0, 1.0, progress)
+	$CoordinateLabel.position.x = -120.0
 	for figure in unit_figures.get_children():
 		var identifier := int(figure.get_meta("unit_id", -1))
 		if not bash_exit_offsets.has(identifier): continue
 		var base: Vector2 = figure.get_meta("ordinary_base_position", figure.position)
-		figure.position = base + Vector2(bash_exit_offsets[identifier]) * (1.0 - smoothstep(0.0, 1.0, progress))
+		var offset := Vector2(bash_exit_offsets[identifier]) * remaining
+		figure.position = base + offset
+		if unit_figures.get_child_count() == 1: $CoordinateLabel.position.x += offset.x
 	$CoordinateLabel.modulate.a = arrival_alpha * progress * (0.35 if is_hovered and _has_character() else 1.0)
 
 ## Reports whether this cell contains the prototype character; hover fading applies only to that presentation.
@@ -388,7 +429,10 @@ func play_bomb_throw(origin_cell: HexCell) -> void:
 ## The destination uses BOMB_OFFSET, shared with historical Bomb Throw replay.
 ## Updates retained life text before the throw-only early return so Slash-held values and per-number pulses advance on stationary cells too.
 ## Queued regional colors wait a frame for synchronous action presenters to register, then wait for the shared finite-animation barrier.
+## After the last Bash damage node finishes, refresh transitions to ordinary layout using the retained side positions.
 func _process(delta: float) -> void:
+	if bash_feedback_held and not _has_rendered_bash_feedback():
+		refresh(targetable, focused_unit_id)
 	_update_control_color()
 	_refresh_life_numbers()
 	if bomb_throw_elapsed < 0.0 or not is_instance_valid(bomb_throw_origin): return
@@ -404,72 +448,11 @@ func _process(delta: float) -> void:
 		bomb_throw_origin = null
 		thrown_bomb = null
 
-## Returns newline-separated action rows within the space left after status rows.
-## refresh() calls it below life and modifier rows; Stun state no longer consumes a compact action row.
-## Reads presentation-only board trigger cues to color the Trigger label yellow while an undismissed cue is active.
+## refresh() and Bash overlays show compact authored rows and pass through the board's currently fired cues.
 func _compact_effect_summary(unit: UnitInfo, max_rows: int = 3) -> String:
-	var labels: PackedStringArray = []
-	for effect in unit.effects:
-		if effect == null or effect.implicit or not effect.consequence is Effect.ConsequencePhrase: continue
-		var phrase := effect.consequence as Effect.ConsequencePhrase
-		var label := _compact_effect_label(phrase, unit)
-		if not labels.has(label): labels.append(label)
-	if not unit.trigger_effects.is_empty():
-		var owner_board := get_parent().get_parent() as GuerraBoard if get_parent() != null else null
-		var highlighted := owner_board != null and not owner_board.highlighted_triggers(unit).is_empty()
-		labels.append("[color=#ffd84a]Trigger[/color]" if highlighted else "Trigger")
-	if max_rows <= 0: return ""
-	if labels.size() > max_rows:
-		return "%s\n+%d" % ["\n".join(labels.slice(0, max_rows - 1)), labels.size() - max_rows + 1]
-	return "\n".join(labels)
-
-## Formats an authored action with its key magnitude and range for the small board label.
-## _compact_effect_summary() calls for each printed action; chosen amounts retain X, and inline hearts use that unit's owner.
-func _compact_effect_label(phrase: Effect.ConsequencePhrase, unit: UnitInfo) -> String:
-	var verb := phrase.verb
-	var name := String(verb.name).replace("_", " ").capitalize()
-	var ctx := RuleContext.new(TargetRef.unit(unit.iun))
-	ctx.subject = ctx.source
-	var params := verb.bound_to(ctx).user_params
-	var action_range := EffectText.selector_range(phrase.target) + unit.ability_bonus(verb).y
-	var markers := _action_sticker_markers(phrase)
-	if verb.name == &"grant_action_values":
-		return ("[lb]A[rb] " if phrase.action_free else "") + EffectText._action_grant(params[0], params[1])
-	if not verb.user_params.is_empty() and verb.user_params[0] is RuleNumber:
-		return "%s%s%s" % [verb.user_params[0].symbol, markers, _action_icon(verb.name, unit.player)]
-	if verb.name in [&"bow", &"fire", &"cannon", &"bomb_throw", &"gore", &"mend", &"stun"]:
-		var values: Array[int] = [int(params[0]) if not params.is_empty() else 0, action_range]
-		if verb.name != &"fire" and params.size() >= 2: values[1] = int(params[1])
-		values = unit.effective_action_values(verb.name, values)
-		return "%s%s%s%s" % [EffectText.action_value(values[0], int(verb.user_params[0])), markers, _action_icon(verb.name, unit.player), EffectText.action_value(values[1], int(verb.user_params[1]) if verb.name != &"fire" else EffectText.selector_range(phrase.target))]
-	if verb.name in [&"push", &"pull", &"push_bomb", &"pull_bomb"] and params.size() >= 2:
-		var printed_values: Array[int] = [int(params[0]), int(params[1])]
-		var values: Array[int] = unit.effective_action_values(verb.name, printed_values)
-		return "%d%s%s%d" % [values[0], markers, _action_icon(verb.name, unit.player), values[1]]
-	if verb.name in [&"shield", &"mshield"] and not params.is_empty():
-		return "%d%s%s" % [int(params[0]), markers, _action_icon(verb.name, unit.player)]
-	if verb.name in [&"move", &"fly"] and not params.is_empty():
-		return "%s%s%s" % [markers, _action_icon(verb.name, unit.player), EffectText.action_value(int(params[0]), int(verb.user_params[0]))]
-	if verb.name == &"upgrade_bow" and params.size() >= 2:
-		return "%+d%s%+d" % [int(params[0]), _action_icon(&"bow", unit.player), int(params[1])]
-	return "%s%s%d" % [markers, _action_icon(verb.name, unit.player), action_range] if action_range >= 0 else "%s%s" % [_action_icon(verb.name, unit.player), name]
-
-## Converts attached Guerra action stickers into the same compact letter prefixes used in its board labels.
-## _compact_effect_label() calls this before formatting an action's amount, icon, and reach.
-func _action_sticker_markers(phrase: Effect.ConsequencePhrase) -> String:
-	var markers := ""
-	if phrase.has_sticker(ActionSticker.Kind.INSTANT): markers += "F"
-	if phrase.has_sticker(ActionSticker.Kind.PIERCE): markers += "P"
-	if phrase.has_sticker(ActionSticker.Kind.TIRELESS): markers += "T"
-	if phrase.has_sticker(ActionSticker.Kind.ACTION_FREE): markers += "A"
-	return markers
-
-## Returns enlarged 48px PixelLab inline icons for authored actions, retaining other existing glyphs.
-## _compact_effect_label() calls this for authored board actions.
-func _action_icon(action: StringName, owner: int = 1) -> String:
-	var icon := GameIcons.bb(action, owner, 48)
-	if not icon.is_empty(): return icon
-	return GameIcons.fallback_glyph(action)
+	var owner_board := get_parent().get_parent() as GuerraBoard if get_parent() != null else null
+	var highlighted: Array = owner_board.highlighted_triggers(unit) if owner_board != null else []
+	return "\n".join(preload("res://scripts/ui/hex_effect_text.gd").rows(unit, max_rows, highlighted))
 
 ## Board target picking uses the same red-left/blue-right halves as Bash hover and figure rendering.
 ## Returns the exact current Bash participant, including inactive units, or -1 when this is not a live two-unit Bash.
@@ -545,6 +528,7 @@ func _render_bash(bash: BashInfo) -> void:
 		_add_bash_stats(unit, side)
 		_add_bash_details(unit, side)
 	rendered_bash = bash
+	if arriving_unit_id == bash.attacker_id: set_bash_approach(bash.attacker_id, 0.0)
 	$CoordinateLabel.text = ""
 	if is_hovered:
 		var local_mouse := get_local_mouse_position()
@@ -583,9 +567,9 @@ func _add_bash_click_box(unit: UnitInfo, side: int) -> void:
 	add_child(box)
 	bash_click_boxes.append(box)
 
-## Box hover callbacks ease from the visible border alpha, replacing an unfinished tween without snapping.
+## Box hover and exit callbacks ease from the visible border alpha, even before the first hover tween exists.
 func _tween_bash_box(box: PanelContainer, alpha: float) -> void:
-	var previous: Variant = box.get_meta("hover_tween", null)
+	var previous: Variant = box.get_meta("hover_tween") if box.has_meta("hover_tween") else null
 	if previous is Tween and previous.is_valid(): previous.kill()
 	var tween := box.create_tween()
 	box.set_meta("hover_tween", tween)
@@ -621,7 +605,7 @@ func _update_bash_info() -> void:
 		_set_bash_hover_side(0 if get_local_mouse_position().x < 0.0 else 1)
 
 ## Adds one participant's actual-life and centered physical/magic pair at the first two hex rows.
-## _render_bash() calls it in player-side order; focus motion slides it horizontally without changing its Y position.
+## _render_bash() calls it in player-side order; the walk presenter uses its rest position to follow the matching figure.
 ## Unit metadata lets the movement presenter fade only the arriving participant's labels.
 ## Rows sit 20px higher with nearest-filtered icons and shared -16 line/-14 paragraph separation.
 ## Each 120px column shares its horizontal center with that participant's action-info lines.
@@ -638,6 +622,7 @@ func _add_bash_stats(unit: UnitInfo, side: int) -> void:
 	stat.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stat.size = Vector2(120, 100)
 	stat.position = Vector2(-120 if side == 0 else 0, -98)
+	stat.set_meta("bash_rest_position", stat.position)
 	stat.z_index = 4
 	stat.add_theme_font_override("normal_font", INFO_FONT)
 	stat.add_theme_font_size_override("normal_font_size", INFO_FONT_SIZE)
@@ -648,10 +633,15 @@ func _add_bash_stats(unit: UnitInfo, side: int) -> void:
 	add_child(stat)
 	bash_overlays.append(stat)
 
-## Board supplies Slash-timed values and one-second heart pulses after either life value increases; ordinary rows retain owner colors.
-func _life_row(unit: UnitInfo, color: String) -> String:
+## Initial rendering, per-frame updates, Bash and death ghosts share light owner colors and fixed-size modifiers.
+## Board.life_number can pulse current life independently of the physical and magical values.
+func _life_row(unit: UnitInfo) -> String:
 	var owner_board := get_parent().get_parent() as GuerraBoard
-	return "[color=%s]%s %s %s[/color]" % [color, owner_board.life_number(unit), owner_board.life_heart(unit), owner_board.life_number(unit, true)]
+	var color := "#ef7770" if unit.player == 1 else "#8cdaff"
+	var row := "[color=%s]%s %+d[/color]" % [color, owner_board.life_number(unit), unit.physical_modifier]
+	if unit.magical_modifier > 0:
+		row += "[color=#deb4ff]/%+d[/color]" % unit.magical_modifier
+	return "[font_size=%d]%s[/font_size]" % [INFO_FONT_SIZE, row]
 
 ## Godot's cell process updates only life text, preserving portrait/selection/hover animations and avoiding a full repaint for each pulse frame.
 func _refresh_life_numbers() -> void:
@@ -659,7 +649,7 @@ func _refresh_life_numbers() -> void:
 	for id in displayed_life_rows:
 		var unit := Match.get_unit(id)
 		if unit == null: continue
-		var next := _life_row(unit, "#ef4444" if unit.player == 1 else "#3b82f6")
+		var next := _life_row(unit)
 		if next != displayed_life_rows[id]:
 			$CoordinateLabel.text = $CoordinateLabel.text.replace(displayed_life_rows[id], next)
 			displayed_life_rows[id] = next
@@ -668,22 +658,15 @@ func _refresh_life_numbers() -> void:
 			var unit := Match.get_unit(int(overlay.get_meta("unit_id", -1)))
 			if unit != null: overlay.text = _bash_stats_text(unit)
 
-## Formats signed physical and optional purple magic as one centered row below actual life, as in Guerra JS.
-## _add_bash_stats() and _update_bash_info() share owner-colored hearts and the same fixed row metrics as ordinary hex info.
-## Current life precedes the heart, matching ordinary rows; Board.life_number holds and pulses it on the Slash beat.
-## Board.life_heart shares the same one-second gain pulse for either participant's actual or maximum life increase.
+## Bash stat creation and live updates center the same compact single stat row used by ordinary hexes.
+## Bash overlays and non-Bash death ghosts share the centered current life and modifier row.
+## Board.life_number holds and pulses current life on the Slash beat.
 func _bash_stats_text(unit: UnitInfo) -> String:
-	var owner_color := "#ef7770" if unit.player == 1 else "#6da9ee"
-	var modifier := "[color=%s]%+d[/color]" % [owner_color, unit.physical_modifier]
-	if unit.magical_modifier != 0:
-		modifier += "[color=#c084fc]%+d[/color]" % unit.magical_modifier
-	var owner_board := get_parent().get_parent() as GuerraBoard
-	var rows := "[color=%s]%s %s[/color]\n%s" % [owner_color, owner_board.life_number(unit), owner_board.life_heart(unit), modifier]
-	return "[center]%s[/center]" % _fixed_info_rows(rows)
+	return "[center]%s[/center]" % _fixed_info_rows(_life_row(unit))
 
 ## Adds the usual three compact hex-info rows for one Bash side, hidden until its portrait is hovered.
 ## _render_bash() creates it for each participant and _animate_bash_focus() fades in only the focused card's rows.
-## Slider characters share full-width focused details; the comparison side-by-side mode retains narrow per-unit details at rest.
+## Side-by-side details retain their rest position for the walk presenter to apply the matching sprite offset.
 ## Rows sit 20px higher with nearest-filtered icons and shared -16 line/-14 paragraph separation.
 func _add_bash_details(unit: UnitInfo, side: int) -> void:
 	var details := RichTextLabel.new()
@@ -699,10 +682,11 @@ func _add_bash_details(unit: UnitInfo, side: int) -> void:
 	details.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	details.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	details.size = Vector2(240, 140)
-	details.position = Vector2(-120, -36)
+	details.position = Vector2(-120, -62)
 	if BoardCharacter.supports(unit) and not bash_slider_enabled:
 		details.size.x = 120
 		details.position.x = -120 if side == 0 else 0
+	details.set_meta("bash_rest_position", details.position)
 	details.z_index = 4
 	details.add_theme_font_override("normal_font", INFO_FONT)
 	details.add_theme_font_size_override("normal_font_size", INFO_FONT_SIZE)
@@ -717,7 +701,7 @@ func _add_bash_details(unit: UnitInfo, side: int) -> void:
 	add_child(details)
 	bash_overlays.append(details)
 
-## Formats up to three status/action rows beneath the separate Bash life/modifier label, without blank-row padding.
+## Formats up to three status/action rows beneath the single Bash stat row, without blank-row padding.
 ## _add_bash_details() and _update_bash_info() use this text; the dedicated label fixes its vertical placement.
 ## Stun counter rows are omitted here; the same transparent strut keeps action spacing identical to ordinary hex info.
 func _bash_card_details(unit: UnitInfo) -> String:
@@ -726,12 +710,14 @@ func _bash_card_details(unit: UnitInfo) -> String:
 	var actions := _compact_effect_summary(unit, remaining_rows)
 	if not actions.is_empty(): rows.append_array(actions.split("\n"))
 	if rows.size() > 3: rows = rows.slice(0, 3)
-	return "[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [INFO_FONT_SIZE, _fixed_info_rows("\n".join(rows))]
+	return "[font_size=%d][color=#fff4d8]%s[/color][/font_size]" % [EFFECT_FONT_SIZE, _fixed_info_rows("\n".join(rows))]
 
 ## Animates one hovered Bash side into Guerra's full-card reveal and restores the compact split on exit.
 ## Red owns the left pointer half and blue the right; each change crossfades directly over the normal 0.18s hover duration.
 ## No intermediate reset or timer delays side switches; an interrupted fade resumes from current opacity.
+## A retained lethal Bash keeps its last side layout and ignores pointer-driven focus until feedback finishes.
 func _set_bash_hover_side(side: int) -> void:
+	if bash_feedback_held: return
 	if side == bash_hover_side: return
 	bash_hover_side = side
 	if side >= 0 and rendered_bash != null:
@@ -743,7 +729,7 @@ func _set_bash_hover_side(side: int) -> void:
 
 ## _set_bash_hover_side() drives reveal/opacity/stats/details using BoardCharacter.HOVER_FADE_DURATION (0.18s), matching normal hover.
 ## Hover follows red-left/blue-right ownership. Slider characters share the portrait behavior while retaining their own opacity/crossfade/greyscale; comparison mode keeps side-by-side labels.
-## Stats keep the same 120px column centers as action info; slider focus centers the whole stat column.
+## Slider focus centers the stat column; in side-by-side mode the walk presenter owns horizontal placement.
 func _animate_bash_focus(side: int) -> void:
 	if rendered_bash == null: return
 	if bash_focus_tween != null and bash_focus_tween.is_running(): bash_focus_tween.kill()
@@ -772,9 +758,9 @@ func _animate_bash_focus(side: int) -> void:
 			var target_x := -60.0 if side == overlay_side else (-120.0 if overlay_side == 0 else 0.0)
 			if character_side and not bash_slider_enabled:
 				target_alpha = 0.35 if side == overlay_side else 1.0
-				target_x = -120.0 if overlay_side == 0 else 0.0
+			else:
+				bash_focus_tween.tween_property(overlay, "position:x", target_x, BoardCharacter.HOVER_FADE_DURATION)
 			overlay.visible = true
-			bash_focus_tween.tween_property(overlay, "position:x", target_x, BoardCharacter.HOVER_FADE_DURATION)
 			bash_focus_tween.tween_property(overlay, "modulate:a", target_alpha, BoardCharacter.HOVER_FADE_DURATION)
 		else:
 			var alpha := 1.0 if side == overlay_side else 0.0

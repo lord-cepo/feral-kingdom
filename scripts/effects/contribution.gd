@@ -2,9 +2,17 @@
 class_name Contribution
 extends RefCounted
 
-enum Kind { MODIFIER, PASSIVE, ACTION_VALUE, SUPPRESS_DEFEAT_TRIGGERS, EXTRA_DEATH_TRIGGER, PLAYER_ACTIONS, SUPPRESS_DEPLOY_TRIGGERS }
+enum Kind { MODIFIER, PASSIVE, ACTION_VALUE, SUPPRESS_DEFEAT_TRIGGERS, EXTRA_DEATH_TRIGGER, PLAYER_ACTIONS, SUPPRESS_DEPLOY_TRIGGERS, CONTROL }
 var extra_triggers := 0
 var actions := 0
+var control := 0
+
+## ControlResolver adds this live strength to the recipient's region, separately from physical protection.
+static func regional_strength(amount: int) -> Contribution:
+	var result := Contribution.new()
+	result.kind = Kind.CONTROL
+	result.control = amount
+	return result
 
 ## Pikeman grants a live player action allowance, not repeatable resource mutations on state reads.
 static func player_actions(amount: int = 1) -> Contribution:

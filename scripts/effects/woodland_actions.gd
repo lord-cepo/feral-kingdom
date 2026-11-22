@@ -71,10 +71,11 @@ static func flee_movement(subject: TargetRef, target: TargetRef) -> Effect.Verb:
 	return null
 
 ## Shared Flee selector asks which destination can be reached by one complete movement; no activity/action payment is charged.
-static func can_flee(subject: TargetRef, target: TargetRef) -> bool:
+static func can_flee(subject: TargetRef, target: TargetRef, _instigator: TargetRef = null) -> bool:
 	return flee_movement(subject, target) != null
 
-## Executes the selected ordinary movement once, retaining Move/Fly events and Bash cancellation/transitions for replay and other triggers.
-static func flee(subject: TargetRef, target: TargetRef) -> bool:
+## Executes the selected movement once; Flee ordered by another unit publishes Shifted instead of voluntary movement.
+static func flee(subject: TargetRef, target: TargetRef, instigator: TargetRef = null) -> bool:
 	var movement := flee_movement(subject, target)
-	return movement != null and bool(movement.function.callv([subject, target] + movement.user_params))
+	return movement != null and CombatResolver.move_unit(subject, target, int(movement.user_params[0]),
+		movement.name == &"fly", true, instigator)

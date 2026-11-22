@@ -84,7 +84,7 @@ func amount(value: int) -> bool:
 	var run := Match.rules_runner.active
 	return run != null and run.current != null and run.current.choose_amount(value)
 
-## Marmot pays normal action/activity, returns another nearby friend and preserves upgrades/counters; self, enemies and distant friends are absent.
+## Marmot pays normal action/activity and returns a nearby friend at printed state; self, enemies and distant friends are absent.
 func test_marmot() -> void:
 	fixture()
 	var marmot := add(CardCatalogue.wild_marmot(1), 0)
@@ -96,7 +96,7 @@ func test_marmot() -> void:
 	check(choose(TargetRef.unit(marmot.iun)), "Marmot pays one activity")
 	check(not choose(TargetRef.unit(marmot.iun)) and not choose(TargetRef.unit(enemy.iun)) and not choose(TargetRef.unit(distant.iun)), "Marmot excludes self/enemy/distant identities")
 	check(choose(TargetRef.unit(friend.iun)), "Marmot selects adjacent friend")
-	check(friend.t_state == Enum.t_state.UNDEPLOYED and counter(friend, &"physical").value == 3, "Marmot Return preserves target counters")
+	check(friend.t_state == Enum.t_state.UNDEPLOYED and counter(friend, &"physical").value == 0, "Marmot Return clears the friend's acquired counter")
 	check(counter(marmot, &"stun").value == 1 and Match.players[1].actions_remaining == 9, "Marmot pays exactly one Stun/action")
 
 ## Jerboa's defensive declaration returns only the enemy attacker, cancels Bash and emits no Flee; outgoing Bash never qualifies.
@@ -129,7 +129,7 @@ func test_dormouse() -> void:
 		check(choose(TargetRef.unit(neighbor.iun)) and neighbor.t_state == Enum.t_state.UNDEPLOYED, "Dormouse Returns either-owner adjacent unit")
 		check(counter(mouse, &"stun").value == 0, "Dormouse Deploy trigger adds no activity payment")
 
-## Chinchilla's death replacement bypasses format/region/control costs, emits Deploy again and preserves the returned ally's state.
+## Chinchilla's death replacement bypasses format/region/control costs, emits Deploy again and returns the ally at printed state.
 ## Wild Rat's duplicate cannot perform another replacement once the source has recovered; Disable is not an own-death trigger.
 func test_chinchilla() -> void:
 	fixture()
@@ -147,7 +147,7 @@ func test_chinchilla() -> void:
 	check(choose(TargetRef.unit(friend.iun)), "Chinchilla chooses one deployed friend after death")
 	check(chinchilla.t_state == Enum.t_state.DEPLOYED and chinchilla.ihx == 4 and chinchilla.actual_life == chinchilla.max_life, "Chinchilla recovers at full health on former friendly hex despite Front/enemy side")
 	check(not chinchilla.active and counter(chinchilla, &"stun").value == 1, "Effect deployment enters inactive with normal Stun")
-	check(friend.t_state == Enum.t_state.UNDEPLOYED and counter(friend, &"magical").value == 3, "Replacement Returns friend without Reset")
+	check(friend.t_state == Enum.t_state.UNDEPLOYED and counter(friend, &"magical").value == 0, "Replacement returns a clean hand card")
 	check(Match.players[1].actions_remaining == actions and Match.players[1].deployments_remaining == deployments + 1, "Special deployment spends no resources and its Deploy grants one deployment")
 	check(events.filter(func(event: EffectEvent) -> bool: return event.action == &"return_to_hand").size() == 1, "Doubled own-death rule cannot Return another card after recovery")
 	fixture()

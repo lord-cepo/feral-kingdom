@@ -56,6 +56,7 @@ func defender_response() -> void:
 	check(Match.complete_action(1), "Attacking turn completes")
 	check(Match.complete_action(2), "Defender response completes")
 
+## Runs the combat integration suite, including parity between pickers and live legality.
 func _ready() -> void:
 	Match.action_event.connect(func(event: EffectEvent) -> void: events.append(event))
 	Match.phase_changed.connect(func(phase: int, player: int) -> void: phases.append([phase, player]))
@@ -65,12 +66,127 @@ func _ready() -> void:
 	test_dodges()
 	test_instant_and_immunity()
 	test_bow_and_cannon()
+	test_prepared_legality()
 	test_bombs()
+	test_bomb_sweep()
+	test_lit_bomb_defuse()
 	test_gore_displacement_and_bash()
 	test_events_and_victory()
 	test_phase_guards()
 	print("Fire integration: %d checks, %d failures" % [checks, failures])
 	get_tree().quit(0 if failures == 0 else 1)
+
+## Exercises shared picker checks and single-target commit checks with different
+## occupants, range changes, and source eligibility. The picker never pays or moves.
+func test_prepared_legality() -> void:
+	fixture()
+	Match.active_player = 1
+	Match.phase = Match.Phase.ACTION
+	Match.players[1].actions_remaining = 1
+	var source := TargetRef.unit(0)
+	var enemy := TargetRef.hex(1)
+	var beyond_enemy := TargetRef.hex(2)
+	var candidates := Match.all(TargetRef.Kind.HEX)
+	var walk := Verbs.movement(2)
+	var fly := Verbs.movement(2, true)
+	var fire_verb := Verbs.fire(1)
+	var bow := Verbs.bow(1, 2)
+	var cannon := Verbs.cannon(1, 2)
+	check(TargetResolver.contains(walk.filter_targets(source, candidates), enemy),
+		"Walk can offer an adjacent enemy landing")
+	check(not TargetResolver.contains(walk.filter_targets(source, candidates), beyond_enemy)
+		and TargetResolver.contains(fly.filter_targets(source, candidates), beyond_enemy),
+		"Walk respects a blocked intermediate hex and Fly can cross it")
+	check(CombatResolver.walk_path(0, 1, 2) == [0, 1], "An adjacent occupied Walk landing has a two-hex path")
+	set_flag(0, &"must_bash")
+	var compulsory := fly.filter_targets(source, candidates)
+	check(TargetResolver.contains(compulsory, enemy) and not TargetResolver.contains(compulsory, beyond_enemy),
+		"Compulsory Bash suppresses otherwise legal empty landings")
+	Match.army[0].props.pop_back()
+	Match.army[0].timed_grants.append(TimedGrant.action_values(1, source, &"cannon", [0, 1], 1, 2))
+	check(TargetResolver.contains(cannon.filter_targets(source, candidates), TargetRef.hex(3)),
+		"Cannon picker includes a live range grant")
+	add_unit(1, 2, 3)
+	CombatResolver.throw_bomb(source, beyond_enemy, 1, 2, false)
+	check(TargetResolver.contains(fire_verb.filter_targets(source, candidates), beyond_enemy)
+		and not TargetResolver.contains(bow.filter_targets(source, candidates), beyond_enemy),
+		"Fire can target a bomb under an ally and Bow rejects the allied-only tile")
+	for verb: Effect.Verb in [walk, fly, fire_verb, bow, cannon]:
+		var legal := verb.filter_targets(source, candidates)
+		for candidate in candidates:
+			check(TargetResolver.contains(legal, candidate) == verb.can_apply(source, candidate),
+				"Prepared and live legality agree for %s" % verb.name)
+		check(verb.filter_targets(TargetRef.unit(1), candidates).is_empty(), "Opponent cannot use the active seat's picker")
+	Match.players[1].actions_remaining = 0
+	check(walk.filter_targets(source, candidates).is_empty()
+		and not Verbs.movement(2, false, true).filter_targets(source, candidates).is_empty(),
+		"Action-free Walk bypasses only the action token requirement")
+
+## Blast scheduling captures the igniting player's home-side counterclockwise sweep, independent of thrower, source movement or map ID order.
+## Effective-copy eligibility includes zero contact and chain bombs, excludes empty and immunity-only cells, and never removes rule targets.
+func test_bomb_sweep() -> void:
+	for owner in [1, 2]:
+		fixture()
+		Match.map.clear()
+		var ring: Array[Vector2i] = [Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1), Vector2i(1, 0)]
+		Match.map.append(HexInfo.new(0, Vector2i.ZERO, Enum.region.FRONT, Enum.side.NONE, 0))
+		for coordinate in ring: Match.map.append(HexInfo.new(Match.map.size(), coordinate, Enum.region.FRONT, Enum.side.NONE, 0))
+		check(CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(0), 1, 0, false), "Place the sweep bomb independently of igniting owner")
+		CombatResolver.ignite_bomb(Match.bomb_at(0), owner, false, false)
+		var expected: Array[Vector2i] = []
+		if owner == 1:
+			expected.assign([Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i.ZERO])
+		else:
+			expected.assign([Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1), Vector2i.ZERO])
+		var actual: Array[Vector2i] = []
+		for attack: CannonAttack in Match.pending_cannon_attacks:
+			actual.append(Match.get_hex(attack.target_hex).coordinate)
+			check(attack.owner == owner, "Sweep retains lighting owner rather than bomb thrower")
+		check(actual == expected, "Ring starts at lighting player's side, sweeps counterclockwise, center last")
+		check(Match.pending_cannon_attacks.size() == 7, "Silent empty cells remain authoritative blast targets")
+	var empty := CannonAttack.new()
+	empty.explosion = true
+	empty.target_hex = 6
+	check(not CombatResolver.bomb_blast_effective(empty), "Empty neighbour does not receive a visual copy")
+	var occupied := CannonAttack.new()
+	occupied.explosion = true
+	occupied.target_hex = 1
+	occupied.amount = 0
+	check(CombatResolver.bomb_blast_effective(occupied), "Zero-damage contact remains effective")
+	set_flag(1, &"obsidian")
+	check(not CombatResolver.bomb_blast_effective(occupied), "Immune-only neighbour receives no copy")
+	occupied.pierce = true
+	check(CombatResolver.bomb_blast_effective(occupied), "Pierce restores contact on immune neighbour")
+	var chain := BombInfo.new()
+	chain.hex_id = 6
+	Match.bombs.append(chain)
+	check(CombatResolver.bomb_blast_effective(empty), "An otherwise empty chain-bomb hex receives a copy")
+
+## Lit Defuse restores original ownership/value/Pierce and cancels only its pending blast; neighbours/range/frozen batches never qualify.
+func test_lit_bomb_defuse() -> void:
+	fixture()
+	CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(1), 3, 1, true)
+	CombatResolver.ignite_bomb(Match.bomb_at(1), 2, false, false)
+	check(CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "Either owner can Defuse a pending lit origin within range")
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(0), 1), "A blast neighbour is not a lit bomb")
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 0), "Out-of-range lit origin remains illegal")
+	var snapshot := preload("res://scripts/runtime/match_snapshot.gd")
+	var saved := snapshot._capture_state()
+	snapshot._apply_state(saved)
+	var records := CombatResolver.pending_lit_bomb(1)
+	check(CombatResolver.defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "Defuse restores the lit bomb after snapshot roundtrip")
+	var restored := Match.bomb_at(1)
+	check(restored != null and restored.owner == 1 and restored.source_id == 0 and restored.damage == 3 and restored.pierce, "Unlit restoration preserves bomb owner/source/value/Pierce rather than lighting owner/Pierce")
+	check(Match.pending_cannon_attacks.is_empty() and records.all(func(attack: CannonAttack) -> bool: return attack.resolved and attack.outcome.get("status") == "defused"), "Every cancelled area record is retired for rules and presentation")
+	var life := Match.army[1].actual_life
+	CombatResolver.resolve_window(1)
+	check(Match.army[1].actual_life == life and not events.any(func(event: EffectEvent) -> bool: return event.action in [&"bomb_hit", &"bomb_explosion"]), "Defused pending blast emits no damage, explosion or chain")
+	check(CombatResolver.defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1) and Match.bomb_at(1) == null, "Defuse of the now-unlit bomb retains ordinary removal behavior")
+	fixture()
+	CombatResolver.throw_bomb(TargetRef.unit(0), TargetRef.hex(1), 2, 1, false)
+	CombatResolver.ignite_bomb(Match.bomb_at(1), 1, false, false)
+	Match.pending_cannon_attacks.clear()
+	check(not CombatResolver.can_defuse_bomb(TargetRef.unit(0), TargetRef.hex(1), 1), "A frozen/resolving blast cannot be rewound by Defuse")
 
 func test_modifiers() -> void:
 	fixture()
@@ -497,6 +613,7 @@ func test_gore_displacement_and_bash() -> void:
 	check(Match.bashes.is_empty() and Match.army[1].t_state == Enum.t_state.DEFEATED,
 		"Fast Bash resolves in its creator's Combat window")
 
+## Resolves Fire events and verifies that lethal hero damage ends the window before another queued attack.
 func test_events_and_victory() -> void:
 	fixture()
 	fire(1)
@@ -515,9 +632,12 @@ func test_events_and_victory() -> void:
 	ctx.cancel()
 	fixture()
 	Match.army[1].type = Enum.type.HERO
+	var later_target := add_unit(2, 2, 1)
 	fire(3)
+	fire(3, false, false, 2)
 	defender_response()
 	check(Match.winner == 1 and Match.phase == Match.Phase.COMBAT_RESOLVE, "Hero defeat ends the match at combat")
+	check(later_target.actual_life == 1 and not Match.rules_runner.busy(), "A later queued attack cannot continue after the hero loss")
 	check(events.any(func(event: EffectEvent) -> bool: return event.action == &"die" and event.data.last_hex == 1), "Death event retains last occupied hex")
 	check(not Match.complete_action(1), "No further turn advance after victory")
 

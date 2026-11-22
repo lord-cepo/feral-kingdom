@@ -2,17 +2,18 @@
 class_name RuleBinding
 extends RefCounted
 
-enum Field { HOST_ID, PROPERTY_KEY, AMOUNT, UNIT_ID, HEX_ID }
+enum Field { HOST_ID, PROPERTY_KEY, AMOUNT, UNIT_ID, HEX_ID, SOURCE }
 var result_name: StringName
 var field: Field
 
-## Courier's transfer definition names a completed counter-choice step and one explicit value to read from it.
+## Names a completed result field, or the current effect source for actions that move another unit.
 func _init(step: StringName, value: Field) -> void:
 	result_name = step
 	field = value
 
-## Verb.bound_to reads frozen PROPERTY/UNIT choices or Summoner's pre-commit hex; missing results never substitute a live candidate.
+## Verb.bound_to reads the effect source or frozen choices; missing results never substitute a live candidate.
 func evaluate(ctx: RuleContext) -> Variant:
+	if field == Field.SOURCE: return ctx.source if ctx != null else null
 	if field in [Field.UNIT_ID, Field.HEX_ID]:
 		if ctx == null: return -1
 		var selected: Array = ctx.completed_results.get(result_name, {}).get("targets", [])

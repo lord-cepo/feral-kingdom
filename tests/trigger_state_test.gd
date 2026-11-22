@@ -95,6 +95,7 @@ func test_have_and_while_contributions() -> void:
 	move_context.phrase = move_phrase
 	move_context.source = TargetRef.unit(0)
 	move_context.subject = TargetRef.unit(0)
+	move_context.query_verb = move_phrase.verb
 	var expanded := DistanceSelector.within(1).resolve(move_context)
 	check(TargetResolver.contains(expanded, TargetRef.hex(2))
 		and CombatResolver.can_move(TargetRef.unit(0), TargetRef.hex(2), 1, false),
@@ -105,6 +106,7 @@ func test_have_and_while_contributions() -> void:
 	fire_context.phrase = fire_phrase
 	fire_context.source = TargetRef.unit(0)
 	fire_context.subject = TargetRef.unit(0)
+	fire_context.query_verb = fire_phrase.verb
 	check(TargetResolver.contains(DistanceSelector.within(2).resolve(fire_context), TargetRef.hex(3)),
 		"A Fire range contribution expands target preview for the named action")
 	Match.army[1].t_state = Enum.t_state.DEPLOYED

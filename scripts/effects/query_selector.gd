@@ -41,11 +41,11 @@ func resolve(ctx: RuleContext) -> Array[TargetRef]:
 	return result
 
 ## Queries live names for Wild/squirrel/mouse groups alongside ownership, zone and genuine passive flags; no group property is stored.
+## ContinuousEffect also tests a single deployed recipient here. Cheap zone and owner restrictions precede passive queries.
 func matches(candidate: TargetRef, ctx: RuleContext) -> bool:
 	if not candidate.valid(): return false
-	if not name_contains.is_empty() and (candidate.kind != TargetRef.Kind.UNIT or not Match.get_unit(candidate.id).name.to_lower().contains(name_contains.to_lower())): return false
-	if not required_flag.is_empty() and (candidate.kind != TargetRef.Kind.UNIT or not Match.get_unit(candidate.id).has_effective_flag(required_flag)): return false
-	var actual_owner := Match.owner_of(candidate)
+	if state >= 0 and Match.get_unit(candidate.id).t_state != state: return false
+	var actual_owner := Match.owner_of(candidate) if owner != Enum.owner.ANY or relative_owner != Enum.ANY else Enum.owner.NONE
 	if owner != Enum.owner.ANY and owner != actual_owner:
 		if not (owner in [Enum.owner.P1, Enum.owner.P2] and actual_owner == Enum.owner.BOTH): return false
 	if relative_owner != Enum.ANY:
@@ -56,7 +56,8 @@ func matches(candidate: TargetRef, ctx: RuleContext) -> bool:
 		if actual_owner != wanted: return false
 	if type != Enum.type.ANY and Match.get_unit(candidate.id).type != type: return false
 	if excluded_type != Enum.type.ANY and Match.get_unit(candidate.id).type == excluded_type: return false
-	if state >= 0 and Match.get_unit(candidate.id).t_state != state: return false
+	if not name_contains.is_empty() and (candidate.kind != TargetRef.Kind.UNIT or not Match.get_unit(candidate.id).name.to_lower().contains(name_contains.to_lower())): return false
+	if not required_flag.is_empty() and (candidate.kind != TargetRef.Kind.UNIT or not Match.get_unit(candidate.id).has_effective_flag(required_flag)): return false
 	if side == Enum.side.ANY and control == Enum.control.ANY and region == Enum.region.ANY: return true
 	if not candidate.has_hex(): return false
 	var tile := Match.get_hex(candidate.hex_id())

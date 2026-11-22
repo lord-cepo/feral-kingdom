@@ -8,7 +8,7 @@ static func can_disable(subject: TargetRef, target: TargetRef) -> bool:
 	var unit := Match.get_unit(target.id)
 	return Match.get_unit(subject.id) != null and unit != null and unit.t_state == Enum.t_state.UNDEPLOYED
 
-## Moves a chosen hand unit directly to defeated while preserving health, counters and abilities; emits one Disable occurrence, not Die.
+## Moves a chosen hand card at its printed state directly to defeated and emits one Disable occurrence.
 ## Managed effects call this through Verbs.disable; boundary followups complete before command resources/turns continue.
 ## Defeating a hero still applies the general hero-loss rule, even though Disable does not cause death triggers.
 static func disable(subject: TargetRef, target: TargetRef) -> bool:
@@ -18,7 +18,7 @@ static func disable(subject: TargetRef, target: TargetRef) -> bool:
 	unit.t_state = Enum.t_state.DEFEATED
 	unit.active = false
 	unit.ihx = -1
-	if unit.type == Enum.type.HERO: Match.winner = 3 - unit.player
+	Match.record_hero_loss(unit)
 	Match.action_event.emit(EffectEvent.new(&"disable", subject, target, {"owner": unit.player}))
 	Match.state_changed.emit()
 	Match.rules_runner.end_boundary()
@@ -31,7 +31,7 @@ static func can_return_to_hand(subject: TargetRef, target: TargetRef) -> bool:
 	var unit := Match.get_unit(target.id)
 	return Match.get_unit(subject.id) != null and unit != null and unit.t_state == Enum.t_state.DEPLOYED and target.has_hex()
 
-## Managed phrases move the chosen board card to its owner's hand, inactive, preserving health, counters and definitions.
+## Managed phrases return the chosen card to its owner's hand inactive at printed state.
 ## One resolved Return occurrence captures its old hex/owner; Bash cleanup and derived control finish before followups resume.
 ## This is neither Reset, Revive, Deploy nor Die and does not spend resources outside the enclosing effect's cost policy.
 static func return_to_hand(subject: TargetRef, target: TargetRef) -> bool:
@@ -39,9 +39,7 @@ static func return_to_hand(subject: TargetRef, target: TargetRef) -> bool:
 	Match.rules_runner.begin_boundary()
 	var unit := Match.get_unit(target.id)
 	var last_hex := unit.ihx
-	unit.t_state = Enum.t_state.UNDEPLOYED
-	unit.ihx = -1
-	unit.active = false
+	unit.enter_hand()
 	Match.action_event.emit(EffectEvent.new(&"return_to_hand", subject, target, {"last_hex": last_hex, "owner": unit.player}))
 	CombatResolver.cancel_dodged_bashes(target.id)
 	Match.refresh_control()
@@ -211,30 +209,38 @@ static func grant_action_values(subject: TargetRef, target: TargetRef,
 	return true
 
 ## Timed modifier selection requires a concrete deployed recipient; card selectors own ownership and triggering eligibility.
-static func can_grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int) -> bool:
+static func can_grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int,
+		enemy_end: bool = false, _stack: bool = false) -> bool:
 	return can_grant_action_values(subject, target, &"modifiers", [physical, magical])
 
-## Captures a recipient-bound modifier pair through the current End; identical same-source grants refresh rather than stack on repeated Move.
-## Different sources stack independently; Match cleanup and snapshot persistence use the shared typed TimedGrant records.
-static func grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int) -> bool:
+## Captures modifiers through current End or enemy End. Identical awards refresh unless the card explicitly stacks each payment.
+## Match cleanup and snapshot persistence use the shared typed TimedGrant records for either policy.
+static func grant_modifiers(subject: TargetRef, target: TargetRef, physical: int, magical: int,
+		enemy_end: bool = false, stack: bool = false) -> bool:
 	if not can_grant_modifiers(subject, target, physical, magical): return false
+	var expiry_player := 3 - Match.owner_of(subject) if enemy_end else Match.active_player
+	var expiry_turn := Match.turn_number + (1 if expiry_player != Match.active_player else 0)
 	var recipient := Match.get_unit(target.id)
-	for grant in recipient.timed_grants:
-		if grant.kind == TimedGrant.Kind.MODIFIERS and grant.source.same(subject) and grant.parameters == [physical, magical] \
-				and grant.expires_player == Match.active_player and grant.expires_turn == Match.turn_number: return true
-	var grant := TimedGrant.modifiers(Match.allocate_timed_grant_id(), subject, [physical, magical], Match.active_player, Match.turn_number)
+	if not stack:
+		for grant in recipient.timed_grants:
+			if grant.kind == TimedGrant.Kind.MODIFIERS and grant.source.same(subject) and grant.parameters == [physical, magical] \
+					and grant.expires_player == expiry_player:
+				grant.expires_turn = expiry_turn
+				return true
+	var grant := TimedGrant.modifiers(Match.allocate_timed_grant_id(), subject, [physical, magical], expiry_player, expiry_turn)
 	recipient.timed_grants.append(grant)
 	Match.action_event.emit(EffectEvent.new(&"grant_modifiers", subject, target, {"values": [physical, magical], "grant_id": grant.id}))
 	Match.refresh_control()
 	Match.state_changed.emit()
 	return true
 
-## Checks a life adjustment on any existing selected unit; selectors own recipient restrictions, and paid defeated sources remain valid.
+## Checks a life adjustment on a field or defeated unit; cards in hand cannot acquire life changes.
 ## Verbs.up_life() calls this for previews and commit; positive health on a defeated unit does not implicitly Revive it.
 static func can_up_life(subject: TargetRef, target: TargetRef, actual_delta: int, max_delta: int) -> bool:
 	if subject == null or target == null or subject.kind != TargetRef.Kind.UNIT or target.kind != TargetRef.Kind.UNIT: return false
 	var unit := Match.get_unit(target.id)
-	return Match.get_unit(subject.id) != null and unit != null and unit.max_life + max_delta >= 0 and (actual_delta != 0 or max_delta != 0)
+	return Match.get_unit(subject.id) != null and unit != null and unit.t_state != Enum.t_state.UNDEPLOYED \
+		and unit.max_life + max_delta >= 0 and (actual_delta != 0 or max_delta != 0)
 
 ## Permanently adjusts actual/max life, clamps to the new maximum, and defeats at zero life.
 ## Captured card triggers such as Squirrel King and Thunder Toad invoke this action.
@@ -386,17 +392,14 @@ static func can_revive(subject: TargetRef, target: TargetRef) -> bool:
 	return source_unit != null and target_unit != null and target_unit.t_state == Enum.t_state.DEFEATED \
 		and target_unit.type != Enum.type.HERO and target_unit.max_life > 0 and source_unit.player == target_unit.player
 
-## Returns a defeated allied non-hero to reserve at full life without deploying it.
-## Triggered death effects and paid Warlock commands call this; stable IDs and stored properties remain attached.
+## Returns a defeated allied non-hero to hand at full printed life without deploying it.
+## Triggered death effects and paid Warlock commands keep the stable card ID while clearing acquired state.
 ## Also emits a return_to_hand occurrence for recovery watchers; Reset remains a distinct in-place action.
 static func revive(subject: TargetRef, target: TargetRef) -> bool:
 	if not can_revive(subject, target): return false
 	Match.rules_runner.begin_boundary()
 	var unit := Match.get_unit(target.id)
-	unit.actual_life = unit.max_life
-	unit.active = false
-	unit.t_state = Enum.t_state.UNDEPLOYED
-	unit.ihx = -1
+	unit.enter_hand()
 	Match.action_event.emit(EffectEvent.new(&"revive", subject, target,
 		{"life": unit.actual_life, "max_life": unit.max_life}, &"resolved"))
 	Match.action_event.emit(EffectEvent.new(&"return_to_hand", subject, target))
@@ -429,23 +432,37 @@ static func displace_bomb(subject: TargetRef, target: TargetRef, distance: int, 
 		pull: bool, action_free: bool) -> bool:
 	return CombatResolver.displace_bomb(subject, target, distance, range, pull, action_free)
 
-static func can_shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool) -> bool:
+## Shield normally protects friends; the Paladin's explicit enemy-hero mode accepts only that opposing deployed hero.
+static func can_shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool, enemy_hero: bool = false) -> bool:
 	if amount < 0 or target == null or target.kind != TargetRef.Kind.UNIT or not target.has_hex(): return false
-	if Match.owner_of(subject) != Match.owner_of(target): return false
-	var key := UnitInfo.TEMP_MAGICAL_COUNTER if magical else UnitInfo.TEMP_PHYSICAL_COUNTER
+	var friendly := Match.owner_of(subject) == Match.owner_of(target)
+	if enemy_hero:
+		if friendly or Match.get_unit(target.id).type != Enum.type.HERO: return false
+	elif not friendly: return false
+	var key := UnitInfo.MSHIELD_COUNTER if magical else UnitInfo.SHIELD_COUNTER
 	var counter := Match.get_property(TargetRef.property(target, key))
 	return counter != null and counter.increment == Enum.p_increment.COUNTER
 
-static func shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool) -> bool:
-	if not can_shield(subject, target, amount, magical): return false
-	var key := UnitInfo.TEMP_MAGICAL_COUNTER if magical else UnitInfo.TEMP_PHYSICAL_COUNTER
+## Shield verbs commit one checked temporary counter gain and retain the granting source in the emitted occurrence.
+static func shield(subject: TargetRef, target: TargetRef, amount: int, magical: bool, enemy_hero: bool = false) -> bool:
+	if not can_shield(subject, target, amount, magical, enemy_hero): return false
+	var key := UnitInfo.MSHIELD_COUNTER if magical else UnitInfo.SHIELD_COUNTER
 	var counter := Match.get_property(TargetRef.property(target, key))
 	if counter == null or counter.increment != Enum.p_increment.COUNTER: return false
 	counter.value += amount
 	Match.action_event.emit(EffectEvent.new(&"mshield" if magical else &"shield", subject, target, {"amount": amount}))
 	return true
 
+## Property mutation verbs protect printed hand properties while allowing inspection through Match.get_property().
+static func _is_hand_property(target: TargetRef) -> bool:
+	if target == null or target.kind != TargetRef.Kind.PROPERTY or target.host == null or target.host.kind != TargetRef.Kind.UNIT:
+		return false
+	var unit := Match.get_unit(target.host.id)
+	return unit != null and unit.t_state == Enum.t_state.UNDEPLOYED
+
+## Cost preflight and decrement commit require a writable counter with sufficient balance.
 static func can_decrement(_subject: TargetRef, target: TargetRef, amount: int) -> bool:
+	if _is_hand_property(target): return false
 	var prop := Match.get_property(target)
 	return prop != null and prop.increment == Enum.p_increment.COUNTER and amount > 0 and prop.value >= amount
 
@@ -455,7 +472,9 @@ static func decrement(subject: TargetRef, target: TargetRef, amount: int) -> boo
 	Match.action_event.emit(EffectEvent.new(&"decrement", subject, target, {"amount": amount}))
 	return true
 
+## ChangeCounter previews and commits only on writable properties; hand counters stay printed.
 static func can_change_counter(_subject: TargetRef, target: TargetRef, _delta: int) -> bool:
+	if _is_hand_property(target): return false
 	var counter := Match.get_property(target)
 	return counter != null and counter.increment == Enum.p_increment.COUNTER
 
@@ -467,7 +486,9 @@ static func change_counter(subject: TargetRef, target: TargetRef, delta: int) ->
 	Match.action_event.emit(EffectEvent.new(&"change_counter", subject, target, {"delta": delta}))
 	return true
 
+## Flag previews and commits cannot change a card's printed hand abilities.
 static func can_set_flag(_subject: TargetRef, target: TargetRef, _value: bool) -> bool:
+	if _is_hand_property(target): return false
 	var prop := Match.get_property(target)
 	return prop != null and prop.increment == Enum.p_increment.FLAG
 

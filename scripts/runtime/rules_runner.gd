@@ -50,7 +50,7 @@ func end_boundary() -> void:
 
 ## Validates an occurrence, filters continuous defeat policy, and captures matching rules now.
 ## Consequences cannot change membership; Match.action_event calls this and defeat captures before removal.
-## Live EXTRA_DEATH_TRIGGER contributions create independent activation objects with their own target choices for each actual death occurrence.
+## Limited triggers reserve their turn before enqueueing; death amplifiers create independent activations for actual death.
 func capture_event(event: EffectEvent) -> void:
 	if event == null or dispatched_occurrences.has(event.occurrence_id): return
 	dispatched_occurrences[event.occurrence_id] = true
@@ -63,20 +63,27 @@ func capture_event(event: EffectEvent) -> void:
 	for owner in [event.controller, 3 - event.controller]:
 		for unit in Match.army:
 			if unit == null or unit.player != owner or unit.t_state != Enum.t_state.DEPLOYED: continue
+			var activation_count := 0
 			for definition in unit.trigger_effects:
 				if definition == null or definition.event == null: continue
+				if not definition.event.accepts_occurrence(event): continue
 				var ctx := RuleContext.new(TargetRef.unit(unit.iun), event)
 				var validation: String = definition.event.validate(ctx)
 				if not validation.is_empty():
 					diagnostics.append(validation)
 					continue
-				if not definition.event.matches(ctx, event): continue
+				if not definition.event.matches_participants(ctx, event): continue
 				var passes := definition.condition == null or definition.condition.test(ctx)
 				if not ctx.error.is_empty():
 					diagnostics.append(ctx.error)
 					continue
 				if not passes: continue
-				for repeat in _death_activation_count(unit, event):
+				var turn_key := definition.once_per_turn_key
+				if not turn_key.is_empty():
+					if unit.trigger_turns.get(turn_key, -1) == event.turn_number: continue
+					unit.trigger_turns[turn_key] = event.turn_number
+				if activation_count == 0: activation_count = _death_activation_count(unit, event)
+				for repeat in activation_count:
 					var execution := EffectExecution.new(definition, ctx.source, event)
 					execution.captured_trigger = true
 					execution.managed = true
@@ -86,14 +93,15 @@ func capture_event(event: EffectEvent) -> void:
 	else: work = captured + work
 	drain()
 
-## Capture evaluates friendly death-trigger amplifiers before removal; extra activations do not emit another Die or recursively amplify themselves.
+## Capture reads only death outputs from deployed sources once per matching watcher, before removal.
+## Extra activations do not emit another Die or recursively amplify themselves.
 func _death_activation_count(unit: UnitInfo, event: EffectEvent) -> int:
 	var count := 1
 	if event.action != &"die": return count
 	for source in Match.army:
 		if source == null or source.t_state != Enum.t_state.DEPLOYED: continue
 		for aura in source.continuous_effects:
-			if aura == null or not aura.applies_to(source.iun, unit.iun): continue
+			if aura == null or not aura.has_output(Contribution.Kind.EXTRA_DEATH_TRIGGER) or not aura.applies_to(source.iun, unit.iun): continue
 			for output in aura.contributions:
 				if output != null and output.kind == Contribution.Kind.EXTRA_DEATH_TRIGGER: count += maxi(0, output.extra_triggers)
 	return count
@@ -102,14 +110,11 @@ func _death_activation_count(unit: UnitInfo, event: EffectEvent) -> int:
 ## Match.defeat() calls capture_event before removal, so the continuous source snapshot is live.
 func _suppresses_event_triggers(event: EffectEvent) -> bool:
 	if event.action not in [&"die", &"deploy"] or event.subject == null or event.subject.kind != TargetRef.Kind.UNIT: return false
+	var kind := Contribution.Kind.SUPPRESS_DEFEAT_TRIGGERS if event.action == &"die" else Contribution.Kind.SUPPRESS_DEPLOY_TRIGGERS
 	for source in Match.army:
 		if source == null or source.t_state != Enum.t_state.DEPLOYED: continue
 		for aura in source.continuous_effects:
-			if aura == null or not aura.applies_to(source.iun, event.subject.id): continue
-			for output in aura.contributions:
-				if output == null: continue
-				if event.action == &"die" and output.kind == Contribution.Kind.SUPPRESS_DEFEAT_TRIGGERS: return true
-				if event.action == &"deploy" and output.kind == Contribution.Kind.SUPPRESS_DEPLOY_TRIGGERS: return true
+			if aura != null and aura.has_output(kind) and aura.applies_to(source.iun, event.subject.id): return true
 	return false
 
 ## Starts one player command, optionally presenting a target before any action cost.
@@ -134,30 +139,57 @@ func submit(effect: Effect, source: TargetRef, defer_cost_until_target: bool = f
 	drain()
 	return true
 
-## Checks HUD availability without paying; Tireless remains usable while inactive.
-## submit repeats these source/token checks before taking ownership.
+## Checks HUD and command availability without paying. While a hero must
+## deploy, its owner cannot start even a Tireless or action-free command.
 func available(effect: Effect, source: TargetRef) -> bool:
 	if effect == null or source == null or not source.has_hex(): return false
+	if Match.owner_of(source) == Match.active_player and Match.hero_deployment_required(): return false
 	if Match.players[Match.owner_of(source)].actions_remaining <= 0 and not effect.is_action_free(): return false
-	var ctx := RuleContext.new(source)
-	if effect.condition != null and not effect.condition.test(ctx): return false
+	if effect.condition != null:
+		var ctx := RuleContext.new(source)
+		if not effect.condition.test(ctx) or not ctx.error.is_empty(): return false
 	if effect.cost is Effect.CostPhrase:
 		var cost := effect.cost as Effect.CostPhrase
 		if cost.verb.name == &"self_stun" and not Match.get_unit(source.id).active: return false
-	return ctx.error.is_empty()
+	return true
 
-## Match's no-action loss check queries legal commands without starting previews, paying costs, or capturing events.
+## Match's no-action loss check and HeadlessMatch query legal player commands without paying costs or capturing events.
+## Event-bound effects can only enter through capture_event(), so they never count as an available player command.
 ## Explores complete payment choices with consequence bindings intact; previews neither pay costs nor publish their synthetic cost_N records.
 func command_available(effect: Effect, source: TargetRef) -> bool:
-	if not available(effect, source): return false
+	if effect == null or effect.event != null or not available(effect, source): return false
 	var ctx := RuleContext.new(source)
 	ctx.preview_numbers = true
 	var payments: Array = []
-	if effect.cost is Effect.CostPhrase: payments.append(effect.cost)
+	if effect.cost is Effect.CostPhrase:
+		var cost: Effect.CostPhrase = effect.cost
+		payments.append(cost)
+		if _is_direct_activity_cost(cost):
+			return _preview_direct_activity(cost, effect.consequence, ctx, payments)
 	elif effect.cost is Effect.CostBundle:
 		if not effect.cost.validate().is_empty(): return false
 		payments.append_array(effect.cost.phrases)
 	return _cost_choices_available(payments, 0, ctx, {}, {}, effect.consequence)
+
+## Identifies the built-in self-Stun payment whose actor and target are both SELF.
+## command_available() retains the general shadow ledger for custom or combined payments.
+func _is_direct_activity_cost(cost: Effect.CostPhrase) -> bool:
+	var verb := cost.verb
+	return verb != null and verb.name == &"self_stun" and verb.legality == Action.can_pay_activity \
+		and verb.subject_kind == TargetRef.Kind.UNIT and verb.target_kind == TargetRef.Kind.UNIT \
+		and cost.subject is Selectors.Self and cost.target is Selectors.Self
+
+## Checks a lone self-Stun against the same bound verb and synthetic completed result
+## as the general preview. No subsequent payment needs a shadow activity/counter ledger.
+func _preview_direct_activity(cost: Effect.CostPhrase, consequence: RefCounted, ctx: RuleContext,
+		payments: Array) -> bool:
+	ctx.subject = ctx.source
+	ctx.query_verb = cost.verb
+	var payable := cost.verb.bound_to(ctx).can_apply(ctx.source, ctx.source)
+	ctx.subject = null
+	if not payable: return false
+	_record_cost_preview(ctx, 0, ctx.source, ctx.source, -1)
+	return _consequence_available(consequence, ctx, payments)
 
 ## A full payment preview checks its first consequence with captured counter kinds/amounts and explicit cost-created zone recipients.
 ## The recursive shadow ledger calls this only after all chosen costs are payable; sequence previews still require their first mandatory step.
@@ -172,15 +204,43 @@ func _consequence_available(consequence: RefCounted, ctx: RuleContext, payments:
 			if selected.size() != 1: continue
 			var recipient := Match.get_unit(selected[0].id)
 			if recipient.iun != ctx.source.id and recipient.type != Enum.type.HERO and recipient.max_life > 0: return true
-	if consequence is Effect.Phrase: return not _legal_phrase_pairs(consequence, ctx).is_empty()
+	if consequence is Effect.Phrase: return _has_legal_pair(consequence, ctx)
 	if consequence is Effect.ConsequenceSequence:
 		for phrase in consequence.phrases:
 			if phrase.optional: continue
-			return not _legal_phrase_pairs(phrase, ctx).is_empty()
+			return _has_legal_pair(phrase, ctx)
 		return not consequence.phrases.is_empty()
 	return false
 
-## Read-only actor/recipient pairs use the same conversion and verb legality boundary as PhraseExecution; no choice is committed.
+## Tests only for existence of a legal actor and target after any previewed payments.
+## Prepared spatial checks can stop during enumeration. Other selectors keep full resolution.
+func _has_legal_pair(phrase: Effect.Phrase, ctx: RuleContext) -> bool:
+	if phrase == null or phrase.verb == null: return false
+	var actors := TargetResolver.resolve(phrase.subject, phrase.verb.subject_kind, ctx)
+	if not actors.error.is_empty(): return false
+	for actor in actors.candidates:
+		if not phrase.verb.accepts_subject(actor): continue
+		ctx.subject = actor
+		ctx.query_verb = phrase.verb
+		if phrase.verb.prepare_legality.is_valid():
+			var bound := phrase.verb.bound_to(ctx)
+			var accept := bound.prepare_target_check(actor)
+			if not accept.is_valid(): continue
+			var found := TargetResolver.any_matching(phrase.target, phrase.verb.target_kind, ctx, accept)
+			if found == Selector.Membership.EXCLUDED: continue
+			if found == Selector.Membership.INCLUDED:
+				ctx.subject = null
+				return true
+		var targets := TargetResolver.resolve(phrase.target, phrase.verb.target_kind, ctx)
+		if not targets.error.is_empty(): continue
+		if not phrase.verb.bound_to(ctx).filter_targets(actor, targets.candidates, true).is_empty():
+			ctx.subject = null
+			return true
+	ctx.subject = null
+	return false
+
+## Enumerates every payable actor/target pair for the cost shadow ledger.
+## Uses the same conversion and verb legality boundary as PhraseExecution.
 func _legal_phrase_pairs(phrase: Effect.Phrase, ctx: RuleContext) -> Array:
 	var pairs: Array = []
 	if phrase == null or phrase.verb == null: return pairs
@@ -192,8 +252,9 @@ func _legal_phrase_pairs(phrase: Effect.Phrase, ctx: RuleContext) -> Array:
 		ctx.query_verb = phrase.verb
 		var targets := TargetResolver.resolve(phrase.target, phrase.verb.target_kind, ctx)
 		if not targets.error.is_empty(): continue
-		for target in targets.candidates:
-			if phrase.verb.bound_to(ctx).can_apply(actor, target): pairs.append([actor, target])
+		var bound := phrase.verb.bound_to(ctx)
+		for target in bound.filter_targets(actor, targets.candidates):
+			pairs.append([actor, target])
 	ctx.subject = null
 	return pairs
 
@@ -246,23 +307,37 @@ func _cost_choices_available(payments: Array, index: int, ctx: RuleContext, coun
 		var previous := ctx.completed_results
 		ctx.completed_results = previous.duplicate()
 		var amount := int(verb.user_params[0]) if verb.name in [&"decrement", &"choose_counter"] else -1
-		var record := {"subject": pair[0], "targets": [target], "success": true, "amount": amount, "preview": true}
-		ctx.completed_results["cost_choice_%d" % index] = record
-		ctx.completed_results["cost_%d" % index] = record
+		if verb.name == &"sacrifice":
+			var donor_life: Vector2i = next_counters.get("life:%d" % target.id, Vector2i(Match.get_unit(target.id).actual_life, 0))
+			amount = donor_life.x
+		_record_cost_preview(ctx, index, pair[0], target, amount)
 		var payable := _cost_choices_available(payments, index + 1, ctx, next_counters, next_activity, consequence)
 		ctx.completed_results = previous
 		if payable: return true
 	return false
 
+## Records the retained preview values used by dependent selectors and numeric bindings.
+## Both the direct self-Stun check and recursive shadow ledger use this same record.
+func _record_cost_preview(ctx: RuleContext, index: int, actor: TargetRef, target: TargetRef, amount: int) -> void:
+	var record := {"subject": actor, "targets": [target], "success": true, "amount": amount, "preview": true}
+	ctx.completed_results["cost_choice_%d" % index] = record
+	ctx.completed_results["cost_%d" % index] = record
+
 ## Drains ordered work until a retained execution waits for UI or the diagnostic limit trips.
 ## Boundary/choice completion and scheduling call this guarded loop.
 ## A captured trigger stays at the queue head until presentation is ready and both player identities acknowledge it.
 ## Queued continuations (including phase changes/token completion) wait for the graphical client's finite action animations.
+## A terminal result discards pending gameplay at the next safe boundary and retains committed command accounting.
 func drain() -> void:
 	if draining or boundary_depth > 0 or active != null or halted: return
 	if presentation_waiting != null: return
 	draining = true
 	while not work.is_empty() and active == null and not halted:
+		if Match.winner != 0:
+			work.clear()
+			continuation_waiting = false
+			if command_open: _finish_command()
+			break
 		var next: Variant = work[0]
 		if next is Callable and presentation_busy_query.is_valid() and presentation_busy_query.call():
 			continuation_waiting = true
@@ -354,6 +429,16 @@ func _finish_command() -> void:
 func schedule(steps: Array) -> void:
 	work = steps + work
 	drain()
+
+## Instant attacks call inside their declaration boundary; defer damage only when this declaration captured a pre-impact reaction.
+## Append behind the declaration's captured triggers and ahead of later combat or token continuations.
+func defer_reacted_attack(event: EffectEvent, impact: Callable) -> bool:
+	var queue := active.followups if active != null else boundary_work
+	for item in queue:
+		if item is EffectExecution and item.triggering_event == event and item.definition.before_attack_resolution:
+			queue.append(impact)
+			return true
+	return false
 
 ## Identifies triggered execution for action legality outside the standalone Action window.
 ## Actions still enforce geometry, recipient, source and activity requirements.

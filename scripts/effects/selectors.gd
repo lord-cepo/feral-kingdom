@@ -29,6 +29,9 @@ class Reference extends Selector:
 		var result: Array[TargetRef] = []
 		if ref != null and ref.valid(): result.append(ref)
 		return result
+	## Revalidates one bound identity for TargetResolver without building a singleton list.
+	func membership(candidate: TargetRef, ctx: RuleContext) -> Membership:
+		return Membership.INCLUDED if candidate.same(get_ref(ctx)) else Membership.EXCLUDED
 
 class Self extends Reference:
 	pass
@@ -181,20 +184,37 @@ class BowTargets extends Selector:
 		return "Bow range must be nonnegative." if printed_range < 0 else ""
 	## Resolves cells within SELF's current printed-plus-upgraded Bow range without mutation.
 	func resolve(ctx: RuleContext) -> Array[TargetRef]:
-		var empty: Array[TargetRef] = []
+		return _matching_hexes(ctx)
+	## TargetResolver checks one chosen Bow cell against the live range at commit.
+	func membership(candidate: TargetRef, ctx: RuleContext) -> Membership:
+		if candidate.kind != TargetRef.Kind.HEX or Match.get_hex(candidate.id) == null:
+			return Membership.EXCLUDED
+		return Membership.EXCLUDED if _matching_hexes(ctx, candidate.id).is_empty() else Membership.INCLUDED
+	## RulesRunner asks for the first Bow hex that passes the current verb check.
+	func any_native(ctx: RuleContext, accept: Callable) -> Membership:
+		return Membership.EXCLUDED if _matching_hexes(ctx, -1, accept).is_empty() else Membership.INCLUDED
+	## Shares Bow's range between the full picker, single-cell checks, and availability.
+	func _matching_hexes(ctx: RuleContext, only_hex: int = -1, accept: Callable = Callable()) -> Array[TargetRef]:
+		var result: Array[TargetRef] = []
 		var source := Selectors.Reference.new(Selectors.Anchor.SELF).get_ref(ctx)
-		if source == null or source.kind != TargetRef.Kind.UNIT or not source.has_hex(): return empty
+		if source == null or source.kind != TargetRef.Kind.UNIT: return result
+		var origin := Match.get_hex(source.hex_id())
+		if origin == null: return result
 		var unit := Match.get_unit(source.id)
-		if unit == null: return empty
+		if unit == null: return result
 		var radius := maxi(0, printed_range + unit.effective_bow_bonus().y)
 		if ctx.query_verb != null: radius += unit.ability_bonus(ctx.query_verb).y
-		var origin := Match.get_hex(source.hex_id())
-		if origin == null: return empty
-		var result: Array[TargetRef] = []
-		for ref in Match.all(TargetRef.Kind.HEX):
-			var tile := Match.get_hex(ref.id)
-			if tile != null and DistanceSelector.hex_distance(origin.coordinate, tile.coordinate) <= radius:
-				result.append(ref)
+		var first := only_hex if only_hex >= 0 else 0
+		var end := only_hex + 1 if only_hex >= 0 else Match.map.size()
+		var first_only := accept.is_valid()
+		for hex_id in range(first, end):
+			var tile := Match.map[hex_id]
+			if tile == null or DistanceSelector.hex_distance(origin.coordinate, tile.coordinate) > radius: continue
+			var candidate := TargetRef.hex(hex_id)
+			if first_only:
+				if accept.call(candidate): return [candidate]
+			else:
+				result.append(candidate)
 		return result
 
 class HexOf extends ProjectionSelector:
@@ -285,6 +305,11 @@ class PropertyOf extends ProjectionSelector:
 			var property_ref := TargetRef.property(ref, key)
 			if property_ref.valid(): result.append(property_ref)
 		return TargetResolver.unique(result)
+	## A selected property must have this key and still belong to a selected host.
+	## TargetResolver checks property existence; unsupported host queries use the full projection.
+	func membership(candidate: TargetRef, ctx: RuleContext) -> Membership:
+		if candidate.property_key != key or candidate.host == null: return Membership.EXCLUDED
+		return input.membership(candidate.host, ctx)
 
 class EnemyOfSelf extends QuerySelector:
 	func _init() -> void:

@@ -5,8 +5,9 @@ The approved crowned heroes and their exact timing/eligibility are in
 [HERO_UNITS.md](HERO_UNITS.md): Grey Squirrel King (5 life), Jerboa King (6), Marmot Queen (6).
 Shared concise hover notation and the distinct Mshield icon/animation are specified
 in [HOVER_TEXT.md](HOVER_TEXT.md). Friendly targets include every unit type unless
-an explicit troop/hero/temple filter says otherwise. Jerboa King's revised normal
-Move support grants the exact friendly mover +2/+0 through the captured End cleanup.
+an explicit troop/hero/temple filter says otherwise. Jerboa King grants +2/+0
+through enemy End to the exact friend another unit moves. See §6 for the
+distinction between **moves** and **is moved**.
 The approved 2026-10-28 roster and detailed timing/counter rulings are in
 [SYNERGY_UNITS.md](SYNERGY_UNITS.md), based on
 [MY_28_UNIT_PROPOSALS.md](MY_28_UNIT_PROPOSALS.md).
@@ -45,8 +46,8 @@ Card wording explains those objects; it is not executable input.
 | 2.7 | Spell states are **undeployed**, **defeated**, and **exiled**. |
 | 2.8 | Every card starts undeployed. |
 | 2.9 | The match format specifies a deployment allowance. Each deployment consumes one deployment counter. |
-| 2.10 | An army contains exactly one hero. Defeating a player's hero causes that player to lose. Sacrifice is the explicit exception in timing: resolve its causal triggers/consequences first, allowing an explicit rescue; an unrescued hero still loses at settlement. |
-| 2.11 | The hero must be its player's first deployed card. |
+| 2.10 | An army contains exactly one hero. Defeating a player's hero causes that player to lose and ends pending gameplay. Sacrifice is the explicit exception in timing: resolve its causal triggers/consequences first, allowing an explicit rescue. An unrescued hero still loses at settlement. |
+| 2.11 | The hero must be its player's first deployed card. If the chosen hero returns to hand, deploying it again is the only legal command at that player's settled Action window. Unchosen hero cards remain in reserve. |
 | 2.12 | A troop has no additional movement restriction beyond its own actions and effects. |
 | 2.13 | A temple is immovable: its position cannot change after deployment, including through forced movement. This is stronger than merely lacking Move. |
 | 2.14 | Actual life below 1 defeats a unit. Defeat preserves its identity for effects such as Revive. |
@@ -56,30 +57,30 @@ Card wording explains those objects; it is not executable input.
 | 2.18 | Each deployed unit has an **active** flag. Deployment enters inactive with one Stun counter; deployment spends a player action token, not the unit's activity cost. |
 | 2.19 | A defeated card cannot simply deploy again. Revive returns a permitted defeated non-hero card to undeployed; it does not place it on the board. |
 | 2.20 | Exiled is distinct from defeated. Return-from-exile and hero-exile outcomes are not yet specified; do not assume Revive applies. |
-| 2.21 | During a settled Action window, the active player loses if they have no legal deployment and no legal unit action. Costs, activity, actions and targets must be available. Pending triggers, choices and phase transitions finish before this check. |
+| 2.21 | During a settled Action window, the active player loses if they have no legal deployment and no legal unit action. If their hero must deploy and they have no deployment counter or no legal hex for it, they lose. Pending triggers, choices and phase transitions finish before this check. |
 
 ## 3. Control, counters, and modifiers
 
 | Rule | Description |
 | --- | --- |
-| 3.1 | Sum each player's units' actual life within a region, plus printed control contributions and stored control counters. +N control adds N counters to that unit, not a physical modifier. |
+| 3.1 | Sum each player's units' actual life in the region, printed and stored control, and live regional-strength contributions. One-time control grants add counters. Continuous control reads the current board. |
 | 3.2 | Add 0.5 to that region's home player in starting/intermediate regions. The front has no home bonus. |
 | 3.3 | Higher total controls the region; equal totals mean neither player controls it. Deployment requires control. |
 | 3.4 | Every unit has a physical and a magical modifier. |
 | 3.5 | Every unit implicitly has: “While your player controls this unit's region, this unit has +1 physical.” This is a live contribution, not a counter grant. Implemented through ControlResolver and UnitInfo.modifier. |
 | 3.6 | Effects may mutate stored counters or supply continuous contributions. Never double-count one bonus through both mechanisms. |
-| 3.7 | Physical modifier = physical + temp_physical counters + live physical contributions. Magical modifier is the equivalent magical sum. |
+| 3.7 | Physical modifier = persistent physical counters + Shield counters + live physical contributions. Magical modifier = persistent magical counters + Mshield counters + live magical contributions. |
 | 3.8 | Values may be signed. Negative modifiers increase an attack's damage or lethal threshold. |
 | 3.9 | Persistent physical/magical counters remain until an effect changes them; attacks do not consume them. |
-| 3.10 | Shield/Mshield add temporary physical/magical counters. Contact by the corresponding attack consumes that temporary protection, including zero-damage or piercing contact. |
-| 3.11 | Immunity preventing contact preserves temporary protection. Physical attacks do not consume magical protection, or vice versa. |
+| 3.10 | Shield and Mshield are stored counters. Matching physical or magical contact uses the current balance in the modifier and clears that counter afterward. Zero-damage and piercing contact also clear it. |
+| 3.11 | Preventing contact preserves both counters. Physical contact only clears Shield. Magical contact only clears Mshield. |
 | 3.12 | Reevaluate control and live bonuses from current board state. Movement, life changes, defeat, and supporting units can change them. |
 | 3.13 | Ordinary damage is max(0, attack value − relevant modifier). Fire instead uses the lethal test in 6.13. Read defensive modifiers at resolution. |
 
 | State kind | Meaning | Example |
 | --- | --- | --- |
 | Persistent counter | Stored number changed once per resolving effect. | +1 physical after each Hit. |
-| Temporary counter | Stored number with a defined consumption rule. | Mshield 2 adds 2 to temp_magical. |
+| Consumable counter | Stored number with a contact consumption rule. | Mshield 2 adds two Mshield counters. |
 | Flag | Stored on/off value. | An explicitly granted Obsidian flag. |
 | Continuous contribution | Derived value present only while its condition holds. | +2 physical while wounded. |
 | Observable property | A fact that can be tested without changing it. | Active, wounded, deployed, adjacent to a hero. |
@@ -151,9 +152,12 @@ not separately for each recipient unless the card explicitly says so.
 | Event / timing | Meaning |
 | --- | --- |
 | Declaration / Target | Commit a legal action to its participants/locations; a delayed attack becomes pending. |
+| Attacks | In declaration-trigger wording, the subject starts a Bash or uses Bow, Fire or Cannon. |
 | Resolved | Reach the action's resolution boundary. Queueing a delayed attack is not resolution. |
 | Hit | Actual attack contact, physical or magical, including zero resulting damage. Cannon and Fire participate; immunity and misses prevent Hit. Bomb blasts remain outside attack families and publish bomb_hit instead. |
 | Wound | Positive actual life loss from attack contact, physical or magical. Nonlethal Fire creates Hit without Wound; lethal Fire creates both. Life payments, Reset and ordinary life changes do not invent attack contact. |
+| Moves | The unit completes its own Walk or Fly, including a Flee using its own movement. |
+| Is moved | Another unit causes its position to change, for example with Push, Pull, relocation or an ordered Flee. |
 | Deploy | Unit enters the board; record it and its destination. |
 | Die | A unit dies and becomes defeated; retain its last location and source information. Disable is a distinct hand-to-defeated change and does not emit Die. |
 | Start / End | Named player's phase boundary. Your next Start differs from opponent's next Start. |
@@ -256,11 +260,11 @@ Choose one legal unit unless the effect explicitly says all.
 
 | Term | Rule |
 | --- | --- |
-| **Deploy** | Put a permitted card from hand on a vacant allowed-region hex you control. Spend one deployment and one action; it enters inactive with one Stun. The hero must be your first deployment. |
+| **Deploy** | Put a permitted card from hand on a vacant allowed-region hex you control. Spend one deployment and one action; it enters inactive with one Stun. Deploy your hero first and redeploy it if it returns to hand. |
 | **Reset** | Restore the chosen unit's printed life, actions, triggers, statics, passives, deployment regions and control bonus. Remove wounds, counters, upgrades, timed grants and copies. Preserve owner, location, card state and activity. Any unit, including a hero, enemy, self or defeated unit, can be selected unless restricted. |
-| **Revive** | Return another friendly defeated non-hero to its owner's hand, inactive at its current full maximum health. Preserve counters, upgrades and abilities. It is not deployment and does not Reset. |
-| **Return** | Move a unit to its owner's hand. Revive emits Return, so Return watchers see it. Board Return accepts any deployed unit (including self, heroes or enemies) unless its selector restricts it. Enter hand inactive, preserving owner, health, counters, upgrades and abilities; clear board position and cancel departed Bash encounters. It does not Reset, heal, Deploy, Die or Flee. |
-| **Disable** | Choose a unit in hand and change its state to defeated, preserving health, counters and abilities. Clear activity and board position. Ownership is selected by the effect. This emits Disable, not Die or Return; it does not fire death triggers. A disabled hero still loses under the hero-defeat rule. |
+| **Revive** | Return another friendly defeated non-hero to its owner's hand at printed state and full printed life. Emits Revive and Return. |
+| **Return** | Put the selected deployed unit in its owner's hand as an inactive printed card at full printed life. Clear wounds, acquired counters, upgrades, copied effects, pending grants and field history. The card keeps its owner and roster identity. Board Return accepts self, heroes and either owner subject to its selector, clears position and cancels departed Bash encounters. Return emits its own occurrence. |
+| **Disable** | Move a selected hand card directly to defeated at printed state. The selector supplies ownership. Disable has its own event and does not fire death triggers. A disabled hero still loses under the hero-defeat rule. |
 | **Copy** | Duplicate one selected action, trigger, static, continuous contribution or passive effect. The donor keeps it; the recipient's future executions bind SELF to the recipient. Do not copy wounds, counters or execution state. Copies remain until Reset; missing required printed resource counters start at zero. |
 | **Flee** | A Bash's original defender leaves its hex alive while still deployed, dodging that encounter. Walking or forced movement can cause it. The attacker leaving or the defender dying is not Flee. The attacker is whoever entered the occupied hex, including forced entry. |
 | **[A]** | Pay one player action plus written resource costs; no implicit self-Stun. Replaces old C notation. |
@@ -269,7 +273,7 @@ Choose one legal unit unless the effect explicitly says all.
 | **[2S] / [A2S]** | Pay two self-Stun instead of one; A is present only when a player action is also charged. |
 | **Sacrifice** | Defeat a chosen deployed friend as payment, emitting ordinary Die and a distinct Sacrifice occurrence. The card selector determines range and SELF eligibility. Heroes qualify: their loss waits for causal triggers/consequences that might explicitly rescue them. A still-defeated or zero-life hero loses at settlement. Paid sacrifices are not refunded after consequence failure. |
 | **Ember** | A unit counter: each Ember adds +1 damage to the next declared Fire. Capture the full bonus and consume current Ember before declaration triggers; later Ember belongs to a future Fire. Misses, ignition and immunity do not refund spent Ember. |
-| **Projectile** | Stored ammunition spent by the printed action. These cards gain two on their own Deploy, not on Reset; Return preserves existing ammunition. |
+| **Projectile** | Stored ammunition spent by the printed action. These cards gain two on their own Deploy. Return clears existing ammunition, and Reset restores the printed zero. |
 
 Reset does not cause Deploy, Return or Die. Captured triggers and queued attacks
 keep their original histories even when their source is Reset or defeated.
@@ -347,8 +351,8 @@ change later results.
 | 6.14 | Cannon(D,R) | Black magic along a line up to R; each affected occupant of either player takes max(0,D−magical modifier) lasting damage. |
 | 6.15 | Bomb-throw(D,R) | Place an inert bomb of value D within R; bombs on the same hex merge damage. Inert bombs do not explode by themselves. |
 | 6.16 | Bomb-light / explosion | Fire or an explosion can light a bomb. Fire on a bomb becomes the bomb blast rather than also damaging its occupant with Fire. Blast covers center and adjacent playable hexes, deals black magical damage, and normally waits for the next opposing response. Fresh chain explosions wait for a later window. |
-| 6.17 | Bomb-defuse | Remove an inert bomb. Triggered Light/Defuse are forced and activity-free in JS, distinct from chosen normal actions. |
-| 6.18 | Shield(V,R) / Mshield(V,R) | Add V temporary physical/magical protection to an ally within R. Grants stack; range zero targets the actor. |
+| 6.17 | Bomb-defuse | A pending lit origin returns to unlit, cancelling its whole queued area; preserve its original owner, source, damage and stored Pierce. An already-unlit bomb is removed. Once the blast batch is frozen/resolving it cannot be defused. Triggered Light/Defuse are forced and activity-free in JS, distinct from chosen normal actions. |
+| 6.18 | Shield(V,R) / Mshield(V,R) | Give V Shield or Mshield counters to a friend within R. Range zero targets the actor. A signed amount, such as +1 Shield or −1 Mshield, states a counter gain or spend. |
 | 6.19 | Push(N,R) / Pull(N,R) | Select an aligned target within R and displace it N steps away/toward along the line. Intermediate units/gap do not block; landing must be playable, not its ally or an existing Bash. Enemy landing creates Bash. |
 | 6.20 | Bomb displacement | Push/Pull can move bombs. Merging sums damage and preserves piercing if either bomb had it. |
 | 6.21 | Stun(N,R) | Makes a hostile recipient inactive and adds N stun counters. The recipient need not be active; that requirement belongs to paying the self-stun cost. Its hero removes one counter at each own Start; once it has no Stun, it activates at its own End after End effects. All other counters, including temporary protection and resource counters, remain intact. Reset is the separate clearing action. |
@@ -356,6 +360,13 @@ change later results.
 | 6.23 | Upgrade | Adjust a specified action's parameters or supported stickers, not general defensive modifiers. JS temporary Upgrade excludes temples and is consumed on action use/resolution; permanent/continuous updates keep their own lifetimes. |
 | 6.24 | Revive | Return a defeated allied non-hero to its current full maximum life in undeployed reserve. Do not deploy it; the death-source rule cannot select itself. |
 | 6.25 | Resources | Change a counter, flag, life value, or player's action-token balance. Spending requires sufficient resources; modifier penalties can still be negative. |
+| 6.26 | Flee | Take one free use of the unit's Walk or Fly. Flee with a fixed distance uses a legal Walk path of up to that distance to a vacant hex. Leaving the shared hex cancels Bash. The effect's source determines whether the recipient moves or is moved. |
+
+Movement events retain the origin and destination. Deployment, Return, Gore
+and a unit's own direct relocation are separate events from **moves** and
+**is moved**. A declaration reaction can pause Instant impact before damage.
+See the [Frontier interactions](FRONTIER_UNITS.md#timing-and-choices) for
+original-victim and Cannon-line examples.
 
 ## 7. Unit properties
 
@@ -480,10 +491,35 @@ The twenty new class/rodent cards are defined in
 [ADVENTURER_UNITS.md](ADVENTURER_UNITS.md), including their full rules table.
 Porcupine Shaman chooses any two distinct bashing units, even from different
 encounters; both are chosen and validated before either returns. Mouse Summoner
-may redeploy the same friend it returned on that friend's former hex, preserving
+may redeploy the same card it returned on that friend's former hex, at printed
 health and paying no extra deployment. Guinea Pig Cleric increases only an
 already-present counter type on an adjacent friend, including value zero; it
 cannot create a missing type. Merchant's recipient-owned next-Fire Pierce/Instant
-is consumed at successful declaration, survives Return/End and clears on Reset.
+is consumed at successful declaration. It survives End and clears on Reset or
+entry into hand.
 Jester reacts to a new enemy regional-control transition, not repeated reads.
 Scout requires presence on enemy Starting, regardless of who controls it.
+
+Bomb sweep ruling (2026-11-06): the original lit marker stays on its origin during
+the response window. At blast resolution, visual copies spread only to neighbours
+with contact-capable units or an inert bomb to ignite; empty and non-pierced
+Obsidian-only cells receive no copy. Zero-damage contact remains effective.
+The ring resolves from the lighting player's geographical side (P1 southwest,
+P2 southeast), counterclockwise, with the original center last. The full playable
+area remains authoritative, including silent cells. Each finite explosion and its
+Slash/Skull/trigger followups settle before the next hex resolves.
+
+## Frontier additions (2026-11-07)
+
+A once-per-turn trigger reserves its occurrence at capture. Later events in
+that turn, including ones queued behind it, cannot capture it again. Reset
+does not undo that reservation. Positive Ember additions emit one occurrence
+per addition regardless of amount. Sacrifice may supply the donor's actual
+life at payment to a consequence; later departure effects cannot change X.
+
+Enemy geography and regional control are separate. The Mole Shaman checks
+enemy geography for its Revive, while the Mara Merchant may deploy in vacant
+enemy-controlled hexes with all other deployment requirements intact.
+Compulsory Bash restricts a Walk to legal enemy landings if at least one exists.
+It neither forces a command nor changes ordinary path and occupancy rules.
+See [Frontier units](FRONTIER_UNITS.md) for the affected cards and timing.

@@ -8,6 +8,8 @@ signal phase_changed(phase: int, player: int)
 signal state_changed
 
 enum Phase { START, ACTION, ACTION_RESOLVE, COMBAT_RESOLVE, END }
+const OCCUPIED_BY_OWNER := 1
+const OCCUPIED_BY_ENEMY := 2
 var phase := Phase.ACTION
 var active_player := 1
 var turn_number := 0
@@ -39,7 +41,8 @@ func _ready() -> void:
 	rules_runner.idle.connect(_check_no_legal_actions, CONNECT_DEFERRED)
 	state_changed.connect(_check_no_legal_actions, CONNECT_DEFERRED)
 
-## Settled Action windows lose immediately when neither deployment nor a payable, legally targeted unit command exists.
+## Settled Action windows lose when the player has no legal command, including
+## when their hero must deploy and they have no deployment counter or legal hex.
 ## Runner idle/state notifications call this after Start/action followups; zero-action transitions and pending choices never cause a premature loss.
 func _check_no_legal_actions() -> void:
 	if winner != 0 or army.is_empty() or phase != Phase.ACTION or _transitioning or rules_runner.busy(): return
@@ -48,15 +51,32 @@ func _check_no_legal_actions() -> void:
 	winner = 3 - active_player
 	state_changed.emit()
 
+## Deployment and command legality use this to enforce the active player's
+## first hero choice and any later redeployment of that same hero.
+func hero_deployment_required() -> bool:
+	var participant: Player = players.get(active_player)
+	if participant == null: return false
+	if participant.selected_hero_id >= 0:
+		var hero := get_unit(participant.selected_hero_id)
+		return hero != null and hero.t_state == Enum.t_state.UNDEPLOYED
+	for unit in army:
+		if unit != null and unit.player == active_player and unit.type == Enum.type.HERO \
+				and unit.t_state == Enum.t_state.UNDEPLOYED:
+			return true
+	return false
+
 ## Queries the active player's deployments and all deployed effects against live authoritative legality without paying or selecting anything.
 ## The loss check and future authority adapters use this; action-free and Tireless effects retain their ordinary eligibility.
 func has_legal_action() -> bool:
+	var can_check_deployments := players.has(active_player) and players[active_player].deployments_remaining > 0
+	var must_deploy := hero_deployment_required()
+	if must_deploy and not can_check_deployments: return false
 	for unit: UnitInfo in army:
 		if unit == null or unit.player != active_player: continue
-		if unit.t_state == Enum.t_state.UNDEPLOYED:
+		if unit.t_state == Enum.t_state.UNDEPLOYED and can_check_deployments:
 			for tile: HexInfo in map:
 				if can_deploy(unit.iun, tile.hex_id): return true
-		elif unit.t_state == Enum.t_state.DEPLOYED:
+		elif unit.t_state == Enum.t_state.DEPLOYED and not must_deploy:
 			for effect in unit.effects:
 				if rules_runner.command_available(effect, TargetRef.unit(unit.iun)): return true
 	return false
@@ -65,7 +85,7 @@ func has_legal_action() -> bool:
 ## The composition root calls this after the board map exists; it assigns stable
 ## army indices, supplies implicit Walk 1 where needed, and begins player 1's first turn.
 ## Accepts at least one hero candidate per owner; first deployment chooses exactly one for that match. Invalid input changes nothing.
-## Captures printed baselines and clears previous-match displacement history and next-Fire grants; setup rebuilds control without triggers.
+## Captures printed baselines and initializes each card's clean hand state; setup rebuilds control without triggers.
 func start_local_match(units: Array[UnitInfo], action_allowance: int, deployment_allowance: int) -> bool:
 	if units.is_empty() or map.is_empty() or action_allowance < 1 or deployment_allowance < 1: return false
 	var heroes := {1: 0, 2: 0}
@@ -108,13 +128,8 @@ func start_local_match(units: Array[UnitInfo], action_allowance: int, deployment
 	props.clear()
 	for unit in units:
 		unit.iun = army.size()
-		unit.ihx = -1
-		unit.last_displaced_turn = -1
 		unit.capture_printed_state()
-		unit.t_state = Enum.t_state.UNDEPLOYED
-		unit.active = false
-		unit.timed_grants.clear()
-		unit.next_fire_stickers.clear()
+		unit.enter_hand()
 		army.append(unit)
 	refresh_control(false)
 	start_turn(1)
@@ -155,20 +170,24 @@ func _enter_action() -> void:
 	state_changed.emit()
 	_transitioning = false
 
-## Checks card state, first-deployment hero choice, region control, vacancy and allowances; nonchosen hero alternatives cannot enter later.
+## Checks card state, required hero deployment, vacancy and allowances; the enemy-control flag also permits opponent-controlled regions.
 ## The local controller calls this both to highlight destinations and before placement.
+## The printed enemy-control deployment permission is read directly from the hand card.
 func can_deploy(unit_id: int, hex_id: int) -> bool:
 	if _transitioning or rules_runner.busy() or phase != Phase.ACTION or winner != 0 or active_player not in [1, 2]: return false
 	var participant: Player = players[active_player]
-	if participant.actions_remaining <= 0 or participant.deployments_remaining <= 0: return false
+	if participant.deployments_remaining <= 0: return false
 	var unit := get_unit(unit_id)
 	var tile := get_hex(hex_id)
 	if unit == null or tile == null or unit.player != active_player or unit.t_state != Enum.t_state.UNDEPLOYED: return false
 	if tile.region not in unit.deploy_regions: return false
 	if unit.deployment_enemy_side and int(tile.side) != 3 - unit.player: return false
-	if not participant.has_deployed and unit.type != Enum.type.HERO: return false
+	if unit.type != Enum.type.HERO and hero_deployment_required(): return false
 	if unit.type == Enum.type.HERO and participant.selected_hero_id >= 0 and participant.selected_hero_id != unit_id: return false
-	if occupants(hex_id).size() > 0 or ControlResolver.region_owner(tile) != active_player: return false
+	if participant.actions_remaining <= 0: return false
+	if not occupants(hex_id).is_empty(): return false
+	var region_owner := ControlResolver.region_owner(tile)
+	if region_owner != active_player and not (region_owner == 3 - active_player and unit.has_flag(&"enemy_control_deploy")): return false
 	return true
 
 ## Places a legal unit inactive with one Stun, pays resources and records the first hero choice; returning that hero never unlocks alternatives.
@@ -221,18 +240,21 @@ func deploy_from_effect(unit_id: int, hex_id: int) -> bool:
 ## Recomputes regional display control and captures one occurrence per actual region gaining a player owner.
 ## Mutations/Board refresh publish by default; setup/snapshot restoration pass false to rebuild caches without fictional gameplay occurrences.
 ## Caches update before triggers, so repeated/reentrant reads cannot recapture a transition.
+## Calculate each region owner once and reuse it for every tile and the captured transition.
 func refresh_control(publish_events: bool = true) -> void:
 	var changed_regions: Array[Dictionary] = []
-	var seen: Dictionary = {}
+	var controls: Dictionary = {}
 	for tile in map:
+		if tile == null: continue
 		var key := Vector3i(int(tile.region), int(tile.side), tile.region_count)
-		if seen.has(key): continue
-		seen[key] = true
-		var owner := ControlResolver.region_owner(tile)
-		if owner in [1, 2] and tile.control != ControlResolver.control_enum(owner):
-			changed_regions.append({"hex": tile.hex_id, "owner": owner, "previous": tile.control})
-	ControlResolver.refresh()
-	if not publish_events: return
+		if not controls.has(key):
+			var owner := ControlResolver.region_owner(tile)
+			var control := ControlResolver.control_enum(owner)
+			controls[key] = control
+			if publish_events and owner in [1, 2] and tile.control != control:
+				changed_regions.append({"hex": tile.hex_id, "owner": owner, "previous": tile.control})
+		tile.control = controls[key]
+	if changed_regions.is_empty(): return
 	rules_runner.begin_boundary()
 	for region in changed_regions:
 		action_event.emit(EffectEvent.new(&"gain_region", TargetRef.player(region.owner), TargetRef.hex(region.hex), {"previous": region.previous}))
@@ -368,13 +390,19 @@ func defeat(ref: TargetRef, event_controller: int = 0, departure_events: Array[E
 	if unit.type == Enum.type.HERO:
 		if departure_events.any(func(event: EffectEvent) -> bool: return event.action == &"sacrifice"):
 			if ref.id not in sacrificed_heroes: sacrificed_heroes.append(ref.id)
-		else: winner = 3 - unit.player
+		else: record_hero_loss(unit)
 	action_event.emit(death)
 	for event in departure_events: action_event.emit(event)
 	CombatResolver.cancel_dodged_bashes(ref.id)
 	refresh_control()
 	state_changed.emit()
 	rules_runner.end_boundary()
+
+## Defeat and Disable record the first terminal hero loss. Their mutation boundary publishes the final state.
+func record_hero_loss(unit: UnitInfo) -> void:
+	if winner == 0 and unit.type == Enum.type.HERO:
+		winner = 3 - unit.player
+		_transitioning = false
 
 ## Runner command completion/idle calls after causal sacrifice work settles; health restoration alone cannot save a still-defeated hero.
 ## Ordinary combat and Disable hero losses keep their existing immediate policy; only the explicitly sacrificed identities are deferred.
@@ -386,7 +414,7 @@ func settle_sacrificed_heroes() -> void:
 	for identifier in pending:
 		var unit := get_unit(identifier)
 		if unit != null and (unit.t_state == Enum.t_state.DEFEATED or unit.actual_life < 1):
-			winner = 3 - unit.player
+			record_hero_loss(unit)
 			state_changed.emit()
 			return
 
@@ -437,13 +465,36 @@ func owner_of(ref: TargetRef) -> int:
 	return Enum.owner.NONE
 
 ## Returns live units at a hex in stable army order; selectors and combat use this query.
+## Hand and defeated cards are skipped before allocating references.
 func occupants(hex_index: int) -> Array[TargetRef]:
 	var result: Array[TargetRef] = []
 	if get_hex(hex_index) == null: return result
 	for index in army.size():
-		var ref := TargetRef.unit(index)
-		if position_of(ref) == hex_index: result.append(ref)
+		var unit := army[index]
+		if unit != null and unit.t_state == Enum.t_state.DEPLOYED and unit.ihx == hex_index:
+			result.append(TargetRef.unit(index))
 	return result
+
+## Reports which sides occupy one hex without allocating target references.
+## CombatResolver uses the bitmask for legal landings and enemy-or-empty attacks.
+## A shared Bash hex sets both bits, while undeployed and defeated cards set neither.
+func occupant_sides(hex_index: int, owner: int) -> int:
+	var sides := 0
+	for unit: UnitInfo in army:
+		if unit == null or unit.t_state != Enum.t_state.DEPLOYED or unit.ihx != hex_index: continue
+		sides |= OCCUPIED_BY_OWNER if unit.player == owner else OCCUPIED_BY_ENEMY
+		if sides == (OCCUPIED_BY_OWNER | OCCUPIED_BY_ENEMY): break
+	return sides
+
+## Builds a current occupancy view for one read-only combat picker.
+## Walk, Bow and Fire reuse it across candidates and discard it before mutation.
+func occupant_sides_by_hex(owner: int) -> Dictionary[int, int]:
+	var occupied: Dictionary[int, int] = {}
+	for unit: UnitInfo in army:
+		if unit == null or unit.t_state != Enum.t_state.DEPLOYED or get_hex(unit.ihx) == null: continue
+		var side := OCCUPIED_BY_OWNER if unit.player == owner else OCCUPIED_BY_ENEMY
+		occupied[unit.ihx] = occupied.get(unit.ihx, 0) | side
+	return occupied
 
 ## Returns the inert bomb at a tile, if present.
 ## CombatResolver uses this for throwing, Fire lighting, defusing, and chain blasts.

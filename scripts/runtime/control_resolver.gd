@@ -7,7 +7,7 @@ extends RefCounted
 static func same_region(a: HexInfo, b: HexInfo) -> bool:
 	return a != null and b != null and a.region == b.region and a.side == b.side and a.region_count == b.region_count
 
-## Sums current life, printed control bonuses and stored control counters for one player in a region.
+## Sums current life, printed/stored control and live regional-strength contributions for one player in a region.
 ## Used by region_owner(); the home bonus is half a point and applies only to
 ## starting/intermediate regions. Bash participants count at their shared destination.
 static func strength(region_hex: HexInfo, player_id: int) -> float:
@@ -20,8 +20,19 @@ static func strength(region_hex: HexInfo, player_id: int) -> float:
 			continue
 		var unit_hex := Match.get_hex(unit.ihx)
 		if same_region(region_hex, unit_hex):
-			total += unit.actual_life + unit.control_bonus + unit._counter_value(UnitInfo.CONTROL_COUNTER)
+			total += unit.actual_life + unit.control_bonus + unit._counter_value(UnitInfo.CONTROL_COUNTER) + live_strength(unit.iun)
 	return total
+
+## Strength reads only CONTROL outputs from deployed sources; their predicates must not query control or modifiers.
+static func live_strength(recipient_id: int) -> int:
+	var amount := 0
+	for source in Match.army:
+		if source == null or source.t_state != Enum.t_state.DEPLOYED: continue
+		for aura in source.continuous_effects:
+			if aura == null or not aura.has_output(Contribution.Kind.CONTROL) or not aura.applies_to(source.iun, recipient_id): continue
+			for output in aura.contributions:
+				if output != null and output.kind == Contribution.Kind.CONTROL: amount += output.control
+	return amount
 
 ## Returns player 1, player 2, or NONE when the regional strengths tie.
 ## Deployment checks and control selectors use this live result.
@@ -31,16 +42,6 @@ static func region_owner(region_hex: HexInfo) -> int:
 	var second := strength(region_hex, 2)
 	if is_equal_approx(first, second): return Enum.owner.NONE
 	return 1 if first > second else 2
-
-## Refreshes all display tiles while calculating each distinct geographical region only once in this pass.
-## Match/Board call after mutations; this local memo never survives a refresh and live legality/physical_bonus queries remain uncached.
-static func refresh() -> void:
-	var regions: Dictionary = {}
-	for tile in Match.map:
-		if tile == null: continue
-		var key := Vector3i(int(tile.region), int(tile.side), tile.region_count)
-		if not regions.has(key): regions[key] = control_enum(region_owner(tile))
-		tile.control = regions[key]
 
 ## Returns the owner's live +1 physical contribution while the unit is deployed.
 ## UnitInfo.modifier calls this; it is derived and never added to stored counters.

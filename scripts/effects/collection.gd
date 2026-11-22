@@ -98,7 +98,7 @@ static func bomb_DR(damage: int, radius: int, pierce: bool = false, tireless: bo
 		DistanceSelector.within(radius, Selectors.Anchor.SUBJECT))
 	return with_action_policy(consequence, tireless, action_free, null, false, pierce)
 
-## Builds an inert Bomb defuse effect; no blast is created by removal.
+## Builds Defuse: a pending lit origin returns to unlit; an inert bomb is removed, without starting a blast.
 ## Object-authored card definitions supply its radius and optional activity/token stickers.
 static func defuse_bomb(radius: int = 0, tireless: bool = false,
 		action_free: bool = false) -> Effect:

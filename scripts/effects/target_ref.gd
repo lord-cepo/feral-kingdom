@@ -50,12 +50,16 @@ func has_hex() -> bool:
 	return hex_id() >= 0
 
 ## Board menus label stable identities; effect properties use captions and counter properties show a readable kind plus current stored balance.
+## Choice lists show card-facing Shield/Mshield names while saved properties retain stable keys.
 func label() -> String:
 	if kind == Kind.PROPERTY:
 		var option := Match.get_property(self)
 		if option is EffectOption: return option.caption
 		if option != null and option.increment == Enum.p_increment.COUNTER:
-			return "%s · %s (%d)" % [host.label(), String(property_key).replace("_", " ").capitalize(), option.value]
+			var counter_name := String(property_key).replace("_", " ").capitalize()
+			if property_key == UnitInfo.SHIELD_COUNTER: counter_name = "Shield"
+			elif property_key == UnitInfo.MSHIELD_COUNTER: counter_name = "Mshield"
+			return "%s · %s (%d)" % [host.label(), counter_name, option.value]
 	match kind:
 		Kind.UNIT:
 			var info: UnitInfo = Match.get_unit(id)

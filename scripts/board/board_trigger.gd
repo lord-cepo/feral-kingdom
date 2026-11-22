@@ -23,6 +23,7 @@ var click_bounds := Rect2()
 ## Stun uses nine orbiting-star frames at head height for STUN_DURATION, shared with its click replay.
 ## Trigger loops until dismissed or the end of the following turn, with 0.25s in/0.35s out fades.
 ## Trigger placement is 20px lower than the original top-left cue; caches stable clip bounds for AnimatedSprite2D hit detection.
+## SerialFeedback supplies the nine-frame Upgrade arrow as a finite clip after positive parameter changes.
 func setup(owner_board: GuerraBoard, owner_unit: UnitInfo, hex_id: int,
 		clip: String = "trigger", duration: float = 0.0) -> void:
 	board = owner_board
@@ -33,7 +34,7 @@ func setup(owner_board: GuerraBoard, owner_unit: UnitInfo, hex_id: int,
 	persistent_trigger = clip == "trigger"
 	expires_turn = Match.turn_number + 1
 	if persistent_trigger: burst_offset = Vector2(-52, -90)
-	if clip in ["slash", "shield", "mshield", "skull"]: burst_offset = Vector2(0, -65)
+	if clip in ["slash", "shield", "mshield", "skull", "upgrade"]: burst_offset = Vector2(0, -65)
 	elif sleeping: burst_offset = Vector2(48, -110)
 	elif clip == "stun": burst_offset = preload("res://scripts/board/board_fire.gd").TARGET_OFFSETS[&"stun"]
 	z_index = 9
@@ -43,7 +44,7 @@ func setup(owner_board: GuerraBoard, owner_unit: UnitInfo, hex_id: int,
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	var frames := SpriteFrames.new()
 	frames.set_animation_loop(&"default", sleeping or persistent_trigger)
-	var frame_count := 9 if clip in ["shield", "mshield", "sleeping", "stun", "skull"] else 8
+	var frame_count := 9 if clip in ["shield", "mshield", "sleeping", "stun", "skull", "upgrade"] else 8
 	frames.set_animation_speed(&"default", float(frame_count) / lifetime if lifetime > 0.0 else 8.0)
 	for index in frame_count:
 		var path := "res://assets/effects/%s/frame_%d.png" % [clip, index]

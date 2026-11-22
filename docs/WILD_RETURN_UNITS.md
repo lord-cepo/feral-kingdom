@@ -45,9 +45,9 @@ one player action. Free triggers do not add ordinary activity or token costs.
   the resource's later balance. Soul-to-Stun also retains its paid X across cost
   followups. Consequence failure does not refund paid resources.
 - Both adjacent Return abilities use exact distance 1. They cannot Return SELF
-  or a unit sharing SELF's own hex. Ordinary Return preserves owner, wounds,
-  counters, upgrades, copied abilities and timed-grant records, while clearing
-  position and activity. It does not heal, Reset, Die or Flee.
+  or a unit sharing SELF's own hex. The returned card keeps its owner and enters
+  hand inactive at printed state, clearing all acquired field state. Its own
+  Return occurrence carries the former hex.
 - Jerboa observes the incoming declaration, including forced entry, and Returns
   its captured enemy attacker rather than another occupant. Outgoing Bash and
   cancelled/resolved attack records do not retrigger it. Return cancels the

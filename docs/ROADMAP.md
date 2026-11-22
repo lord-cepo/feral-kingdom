@@ -212,7 +212,9 @@ contact events; Cannon's straight-line magical damage; Bomb throw/merge, defuse,
 Fire ignition, area damage, and delayed chain blasts; Gore leaps and hits; Push/
 Pull of units and bombs; delayed Bash with the listed combat passives; Mend's
 allied healing with a max-life cap; additive hostile Stun with Start recovery; and
-death-triggered Revive to full-life reserve. Stun preserves all other counters, including temporary protection (2026-10-26 ruling). Board Return moves a deployed card to its owner's hand without resetting it.
+death-triggered Revive to full printed life in reserve. Stun preserves other counters,
+including temporary protection. Return and Revive clear acquired state when the
+card enters its owner's hand (2026-11-08 ruling).
 Movement upgrades and the remaining listed actions remain open. Combat now waits for
 triggered choices, and Bow/Gore/Bash share physical Hit/Wound publication.
 
@@ -420,3 +422,11 @@ Snapshot support retains spending and displacement history. Native art imports,
 usage/ruling documents and focused per-effect regressions accompany the roster.
 General future-phase scheduling and unrelated roadmap stages remain deferred.
 See [SYNERGY_UNITS.md](SYNERGY_UNITS.md) for current interfaces and caller maps.
+
+### Frontier roster slice (2026-11-07)
+
+The eleven approved [frontier cards](FRONTIER_UNITS.md) append after the
+previous catalogue IDs. This slice adds a persisted once-per-turn trigger
+ledger, captured Sacrifice life, enemy-control deployment permission and
+compulsory Bash destination selection for Walk. It reuses typed timed
+modifiers and the existing two-player trigger, payment and selection paths.

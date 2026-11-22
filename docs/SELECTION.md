@@ -62,6 +62,33 @@ var all_enemies := Effect.ConsequencePhrase.new(
 )
 ```
 
+`PhraseExecution` builds the full legal list when offering a choice. At commit
+it passes the chosen identity to `TargetResolver.resolve(selector, kind, context, selected)`
+and then checks the verb. Selectors that can decide membership directly may
+implement `membership(candidate, context)`. For example, confirming Walk
+checks only the clicked hex against the current range and verb legality.
+`UNKNOWN` keeps the full selector evaluation. For HEX → UNIT, the resolver
+checks the selected unit's live hex and keeps the exact unit identity.
+`ALL` still rebuilds the batch in deterministic identity order at commit and
+rechecks each recipient against live rules before applying its action.
+
+For full candidate lists, `PhraseExecution` and `RulesRunner` call
+`Verb.filter_targets()`. Move, Fly, Bow, Fire and Cannon prepare shared source,
+range, and action-value checks once for the current read-only list. For example,
+a Walk picker evaluates compulsory Bash once and shares an occupancy view and
+one search of reachable hexes across its destinations. Cannon checks endpoint
+alignment and builds the path only at declaration. A selected target still goes
+through live legality before execution, including after costs or triggers.
+
+For command availability, `RulesRunner` asks whether the first required
+consequence has any legal actor and target. `TargetResolver.any_matching()`
+allows a native distance or Bow selector to stop at the first legal hex with
+the prepared verb check. Unsupported queries and domain conversions use full
+resolution. Payment preflight still enumerates payable alternatives. For a
+lone built-in SELF Stun cost, availability checks the bound verb directly and
+passes the same synthetic `cost_0` result to the consequence. Bundled and
+other payments continue through the shadow ledger.
+
 `CHOOSE_ONE` is the default. Targets always require a user choice, even when
 only one exists. A unique subject is resolved automatically. `ALL` skips the
 target picker; it snapshots the legal targets at commit in stable ID order.
@@ -140,7 +167,7 @@ has already been paid.
 Timed records now distinguish action values from physical/magical modifier pairs.
 `Verbs.grant_modifiers(2, 0)` attaches a recipient-bound +2/+0 through the captured
 current End cleanup; UnitInfo derives it without counter mutation, and snapshots
-retain its kind. Jerboa King's Move support refreshes identical same-source grants.
+retain its kind. Jerboa King's Shifted support uses `Verbs.grant_modifiers(2, 0, true)` to capture enemy End instead; identical same-source grants refresh.
 See [HERO_UNITS.md](HERO_UNITS.md) and [HOVER_TEXT.md](HOVER_TEXT.md) for current
 callers, examples, general description rules and the distinct purple Mshield asset.
 
@@ -206,8 +233,8 @@ independently; only the timed grant expires automatically.
 | `Verbs.movement(range, flying)` → `Action.move()` / `Action.fly()` | Phrase commit resolves the destination through CombatResolver; it captures origin control, changes position, cancels any Bash dodged by the mover, and creates a new Bash on an enemy landing. |
 | `Verbs.mend(amount, range)` → `Action.mend()` | Phrase commit restores actual life up to starting life, emits a resolved Mend event, and refreshes derived regional control. `CardCatalogue.spring_temple()` authors the reference card. |
 | `Verbs.stun(amount, range)` → `Action.stun()` → `CombatResolver.stun()` | Phrase commit deactivates an enemy and adds the requested Stun counters. The recipient may already be inactive; all other counters, including temporary protection, remain intact (2026-10-26 ruling). `Collection.stun_DR()` adds the shared activity/token policy. |
-| `Verbs.revive()` → `Action.revive()` | A captured death trigger chooses a defeated allied non-hero, restores it to full life in undeployed reserve, and leaves deployment to a later command. The source cannot revive itself. |
-| `Verbs.return_to_hand()` → `Action.can_return_to_hand()` / `Action.return_to_hand()` | PhraseExecution offers deployed UNIT identities, revalidates the exact choice, then moves it inactive to its owner's hand without Reset. Emits one `return_to_hand`, cancels departed Bash records and refreshes control inside one runner boundary. The selector supplies ownership/range restrictions. |
+| `Verbs.revive()` → `Action.revive()` → `UnitInfo.enter_hand()` | A captured death trigger or paid command chooses another defeated allied non-hero and restores printed state in hand, then emits Revive and Return. |
+| `Verbs.return_to_hand()` → `Action.return_to_hand()` → `UnitInfo.enter_hand()` | PhraseExecution offers deployed UNIT identities and revalidates the exact choice. The card enters hand at printed state. Action emits one `return_to_hand` with the former hex, cancels departed Bash records and refreshes control in one runner boundary. |
 | `WildRules.harvest_counters()` → `Selectors.CountersOf` → `PhraseExecution.AMOUNT` / `choose_amount(X)` | Collect one friendly deployed UNIT, one positive counter PROPERTY and one bounded positive X without payment. CostPayment revalidates all choices, commits atomically and records `cost_N.amount`; `RuleNumber.paid_amount(N)` supplies consequences. |
 | `Verbs.return_and_deploy()` → `WildActions.return_and_deploy()` → `Match.deploy_from_effect()` | Chinchilla Returns one friend, recovers at full current maximum health on that captured hex and emits a new Deploy without ordinary placement/resource requirements. Followups wait for both zone changes. |
 | `Match.action_event(return_to_hand)` → `GuerraBoard._on_action_presentation()` → `board_return.gd` | Snapshots the departing figure before repaint, fades upward and waits as finite causal feedback before trigger acknowledgements/phase continuation. |
@@ -225,7 +252,7 @@ independently; only the timed grant expires automatically.
 | `Verbs.gore` / `push` / `pull` / `push_bomb` / `pull_bomb` → `Action` → `CombatResolver` | Phrase commit captures Gore's path hits, displaces a unit/Bomb along an axial line, and creates Bash on enemy landings. |
 | `CombatResolver.resolve_window(defender)` | `Match.complete_action()` calls it at Combat-resolve; queued Bow/Gore, Cannon/Bomb, Fire, then eligible Bash resolve in order. |
 | `Match.defeat(unit)` | Lethal Fire calls it; stable army entry remains while the unit loses its live hex. |
-| `Match.action_event` → `RulesRunner.capture_event()` | Match connects this once; the runner de-duplicates occurrences, orders matching `trigger_effects`, and drains supported cost-free ALL consequences after each event. |
+| `Match.action_event` → `RulesRunner.capture_event()` | Match connects this once. The runner de-duplicates occurrences, reserves any limited trigger's turn, and orders matching `trigger_effects` for execution. |
 | `UnitInfo.state_modifiers()` → `StateModifier.evaluate()` → `Condition.test()` | Modifier getters call this read-only path; attached contributions change effective stats without counter writes. |
 | `UnitInfo.state_modifiers()` → deployed source `ContinuousEffect.evaluate()` → `TargetResolver` / `Condition` | Effective modifier reads scan deployed aura sources and test each current recipient; the War Temple factory uses this path during Bash. |
 
@@ -581,6 +608,14 @@ mutation. Cancelling before payment leaves the board unchanged. Once paid, the
 cost is not refunded if the consequence is cancelled, declined, or fails.
 A missing consequence completes successfully after payment.
 
+A fixed payment bundle can opt in with
+`Effect.CostBundle.new([Collection.action_cost(), life_payment], true)`.
+`WoodlandRules.life_cost()` uses this for activity and life payments.
+`EffectExecution._begin()` starts each payment phrase, and
+`PhraseExecution._refresh()` retains its legal direct SELF target without a
+picker. The bundle still preflights all payments together. A friendly-unit
+consequence such as Doctor's heal keeps its own CHOOSE_ONE picker.
+
 For ordered consequences, pass an `Effect.ConsequenceSequence` as the third
 argument to `Effect.new()`. Each step uses the same SELF, gets independent
 subject/target choices, and starts only after the preceding step succeeds:
@@ -619,6 +654,14 @@ Completed phase results are available under `execution.results["cost"]` and
 (or role `&"subject"`) for explicit cross-phrase references.
 
 ## Events
+
+Walk and Fly publish resolved `move` with the mover, origin, destination and
+`started_bash`. Push/Pull and movement imposed by another card publish resolved
+`shifted` with the moved unit as subject, destination HEX as target and the
+imposing UNIT in `instigator`. `RuleBinding.Field.SOURCE` lets a consequence
+retain that identity separately from its movement subject. For example, the
+Musketeer's Flee phrase binds `EVENT_TARGET` as mover and keeps SELF as the
+imposing source. See the [second-batch caller map](FRONTIER_UNITS.md#second-batch-callers).
 
 Actions emit `Match.action_event` with an `EffectEvent`, in addition to the
 existing deactivate/fire signals. Supply this event when starting a triggered
@@ -813,7 +856,9 @@ their fixed recipient requires no player decision. For example, after Reed
 Archer wounds an enemy with Bow, its +1 damage/range applies immediately and the
 queued combat/phase continuation resumes; clicking the Archer is unnecessary.
 Keep ordinary attacks and triggers with a genuine recipient choice as
-`CHOOSE_ONE`, which still asks even when only one legal target remains.
+`CHOOSE_ONE`, which still asks when a query happens to find just one legal
+target. Target-first player commands can resolve explicit SELF, SUBJECT, and
+a named property of either directly.
 
 `Collection.cannon_DR(damage, radius)` authors a magical straight-line action.
 Players choose an aligned endpoint; every playable hex on that line gets a
@@ -1083,9 +1128,11 @@ Red Player 1 at x=-65 and blue Player 2 at x=65. During the final walking step,
 `Board._advance_walk()` queries `HexCell.bash_arrival_offset()` and calls
 `set_bash_approach()`: the attacker approaches its side while the defender eases
 from center to the opposite side. The lead-in holds their starting positions.
+The stats and action rows use the same frame offsets as their sprites.
 `_on_action_presentation()` reapplies approach after repaint; `_finish_walk()`
 settles the defender before revealing the stationary attacker at the same anchor.
-For example, walking onto an enemy now ends beside it without a sideways jump.
+When Bash ends, `_apply_bash_exit_progress()` moves the surviving unit's hex info
+with its sprite as it returns to the center.
 
 Enabling the exported setting selects the experimental slider described below.
 In that mode, `_render_bash()` centers both mapped characters at x=0 and sets
@@ -1334,3 +1381,85 @@ while excluding misses/immunity. Bomb continues to use its separate bomb_hit.
 Focused scene: `godot --headless --path . res://tests/synergy_units_test.tscn`.
 Only execute behavioral scenes when the user's prompt ends in `TEST`.
 
+
+### Live continuous presentation
+
+GuerraBoard._ready installs continuous_cues.gd. Match.state_changed calls its
+refresh observer, which reads StateModifier conditions and ContinuousEffect.applies_to
+for current deployed recipients. A static white/light-brown pixel circle with a
+black outline sits beside the phase sign; no continuous markers appear on units.
+The circle fades when there are no eligible continuous rules. It does not blink,
+require acknowledgement, accept dismissal or block phase progress. Yellow trigger
+gates remain independent. LocalMatchController._process polls hovered_text for
+the circle and _show_continuous_hover lists active rules grouped by source.
+For example, loading a friend beside Grey Squirrel King includes his rule in the
+circle's hover text; spending the final Projectile removes that entry unless
+another loaded adjacent recipient remains.
+HeroCatalogue.jerboa_king observes Shifted. CombatResolver._apply_displace emits
+Shifted once after a successful Push/Pull with the displaced unit as EVENT_SUBJECT
+and its destination HEX as EVENT_TARGET. Verbs.grant_modifiers(2, 0, true) captures
+source enemy End in a TimedGrant. Existing cleanup/snapshot paths retain the boundary.
+See tests/hero_units_test.tscn for the focused regression scene (run only on TEST).
+
+### Positive-parameter upgrade feedback
+
+`GuerraBoard._ready` installs `serial_feedback.gd` after its presentation listeners.
+`Match.state_changed` and `Match.action_event` call the observer: it compares live
+current/max life, physical/magical modifiers and bound/effective numeric action
+parameters against the same deployed unit's previous values. One notification
+with any positive delta queues one recipient-bound upgrade; repeated notification,
+zero/decrease, initial deployment and fast replay do not queue upgrades. Chosen
+ability upgrades and continuous/timed action values use existing read-only getters.
+The observer never mutates game values or emits gameplay events.
+
+`_show_target_feedback` queues Shield/Mshield/Stun rather than playing them directly.
+SerialFeedback drains one clip at a time after `_finite_presentation_busy` clears:
+attack travel, movement, Slash/Skull, heart pulses, displacement and sign entrances
+finish first. `_phase_presentation_busy` includes pending/active recipient clips,
+so phase and trigger presentation cannot release ahead of them. Persistent sleeping,
+trigger and ambience loops are excluded. Invalid/off-board/replaced recipients are
+skipped. Existing combat-owned attack-to-damage sequences keep their own timing.
+For example, a Bow damage/range grant queues one nine-frame upgrade on the recipient;
+a Shield sequence plays each recipient's finite feedback in order.
+
+EffectText._steps/_phrase render the shared GameIcons upgrade arrow in place of the
+word Upgrade. `assets/icons/ui/upgrade.png` and `assets/effects/upgrade/frame_0..8.png`
+are native pixels from owned PixelLab object `1d3948d0-a80f-43dd-9fb2-4a6daf23c526`,
+animation group `6da88bb6-0985-4b31-9c99-5fd763510922`. No new generation was used.
+Focused observer regressions: `tests/upgrade_feedback_test.tscn`; run only on TEST.
+
+### Bomb origin, spread and sweep
+
+CombatResolver._apply_ignite_bomb uses bomb_blast_coordinates to capture a
+lighting-owner counterclockwise ring (P1 southwest, P2 southeast), then center.
+RulesRunner keeps the existing per-Cannon/Bomb continuation and trigger waits.
+GuerraBoard._present_bomb_blast creates bomb_blast.gd's lit origin overlay; it no
+longer creates neighbour copies at lighting. When the frozen batch removes its
+records from Match.pending_cannon_attacks, _prepare_spread captures effective
+neighbours via CombatResolver.bomb_blast_effective. Contacts include zero damage;
+immune-only and empty neighbours get no copy, while chain bombs do. Rules still
+resolve every captured playable area hex against its current occupants.
+Board's finite feedback query waits for the 650ms spread before resolving the first
+hex; remaining_spread feeds explosion/damage delay calculations. Resolved effective
+bomb_explosion events create bomb_explosion.gd, then the existing damage sequence
+plays Slash and possible Skull before the next queued hex. Original/replica art
+hands off to its own resolved explosion. See tests/fire_test.tscn, test_bomb_sweep
+for owner/order, unchanged area and effective-copy eligibility (run only on TEST).
+
+Lit Defuse: can_defuse_bomb and _apply_defuse_bomb share pending_lit_bomb(origin),
+which accepts only unresolved public blast records for the exact origin. Commit
+restores the captured inert bomb, marks its records resolved/defused and removes
+them from the pending queue. CannonAttack now retains bomb_owner/bomb_pierce;
+MatchSnapshot captures/restores these separately from lighting owner/Pierce.
+Older snapshots default those absent fields to the captured blast values.
+BombBlast recognizes the defused outcome, suppresses spread, and crossfades the
+lit origin over the restored ordinary unlit marker via _release_origin.
+Example: light a stored piercing Bomb 3 with non-piercing enemy Fire, then Defuse:
+the blast disappears and the original owner's piercing Bomb 3 remains unlit.
+Focused regression: fire_test.gd::test_lit_bomb_defuse (run only on TEST).
+
+Continuous indicator layout: ContinuousCues._process now sizes the circle to 22px
+(including asset margin), half its earlier size, at phase-sign local (44, 113)
+inside the board left of the caption. hovered_text uses the sprite transform so
+its hitbox follows that placement/scale. refresh colors each source-unit name
+with phase-sign player colors: P1 #ef7770, P2 #6da9ee. Rule text remains unchanged.

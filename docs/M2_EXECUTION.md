@@ -153,10 +153,24 @@ shadow resource ledger. Two decrements of 2 cannot spend the same counter of 3;
 two activity payments cannot spend the same activity. Only after full preflight
 does the bundle commit, with followups deferred until the whole payment finishes.
 
-Supported bundle verbs are built-in self-Stun (with its authored positive amount),
-deactivate, decrement, life payment, next-turn-action payment and the explicit
-selection-only `choose_counter_unit` anchor. Variable decrements bind their
-positive X through the retained phrase before cumulative preflight.
+Projectile commands opt into `CostBundle.implicit_self` through
+`SynergyRules.command`. `PhraseExecution._refresh` collects the single legal
+SELF activity payment and named SELF Projectile counter automatically. The
+board's target preview still happens before payment. Cancelling the preview
+leaves both costs untouched. Payments with a choice of payer or counter keep
+their picker.
+
+For target-first player commands, `EffectExecution._begin` also enables
+automatic selection for explicit SELF, SUBJECT, and a named property of
+either. For example, choosing the Shield command immediately applies Shield
+to its actor. A ranged command still asks where to shoot and then pays its
+fixed costs. Optional confirmations and variable amounts retain their prompts.
+
+Supported bundle verbs include self-Stun, deactivate, decrement, life payment,
+next-turn-action grants, Sacrifice, Disable, Return, deployment spending and
+the selection-only `choose_counter_unit` anchor. The explicit enemy-hero
+Shield variant can be a payment and publishes Shield before consequences.
+Variable decrements bind their positive X before cumulative preflight.
 Custom mutation costs, optional payment members, ALL costs, and costs that need
 newly created targets are rejected or outside this interface. New atomic cost
 types require explicit preflight and commit support, not an arbitrary Callable
@@ -269,7 +283,7 @@ side effects, spells and exile have not been assigned new rules.
 | --- | --- | --- |
 | LocalMatchController | `RulesRunner.submit` | Submit one player command. |
 | Match/CombatResolver | `begin_boundary` / `end_boundary` | Finish a mutation before releasing followups. |
-| Match.action_event | `capture_event` | Snapshot all matching definitions once per occurrence. |
+| Match.action_event | `capture_event` | Snapshot all matching definitions once per occurrence. Reserve any turn-limited trigger before enqueueing it. |
 | RulesRunner | `execution_started` -> Board.observe_execution | Attach or restore choice UI. |
 | EffectExecution | `after_cost` | Release cost followups before resuming consequences. |
 | Board controls | `confirm`, phrase `choose`, execution `cancel` | Resume retained work with current legality. |
@@ -417,9 +431,10 @@ var effect := Collection.with_action_policy(consequence, false, false)
 ```
 
 Removing the ownership filter permits either owner; use spatial selectors for
-range. Return keeps health, counters, upgrades and abilities, clears position,
-enters hand inactive and cancels departed Bashes without Flee. Revive still
-emits the same Return occurrence for its separate defeated-to-hand recovery.
+range. Return and Revive share `UnitInfo.enter_hand()`, which restores printed
+state, clears field history and leaves the card inactive. Board Return captures
+the former hex and cancels departed Bashes without Flee. Revive emits Revive and
+Return for its defeated-to-hand recovery.
 Stun only deactivates and adds Stun; it never clears other counters. Reset
 remains an in-place restoration of printed state.
 

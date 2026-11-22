@@ -97,16 +97,17 @@ func test_explorer() -> void:
 	check(explorer.counter_modifiers() == Vector2i(1, 2), "Explorer ignores reductions and enemy increases")
 	check(explorer.deploy_regions == [Enum.region.STARTING, Enum.region.FRONT], "Explorer's SF regions are explicit")
 
-## Doctor's lethal AC is payable and still heals its chosen friend; enemy targets and unpayable costs are rejected before mutation.
+## Doctor collects its fixed costs without a picker, then requires an explicit friendly recipient even with one legal choice.
 func test_doctor() -> void:
 	fixture()
 	var doctor := add(CardCatalogue.red_squirrel_doctor(1), 0)
 	var friend := add(CardCatalogue.rat_warrior(1), 1)
 	var enemy := add(CardCatalogue.rat_warrior(2), 2)
 	doctor.actual_life = 1
-	check(Match.rules_runner.submit(doctor.effects[1], TargetRef.unit(doctor.iun)), "Doctor offers an AC life payment")
-	pay_bundle(doctor)
+	check(Match.rules_runner.submit(doctor.effects[1], TargetRef.unit(doctor.iun)), "Doctor starts its fixed life payment")
 	check(doctor.t_state == Enum.t_state.DEFEATED, "Paying the final current life defeats Doctor")
+	check(friend.actual_life == 3, "The only eligible friend still requires an explicit choice")
+	check(not choose(TargetRef.unit(doctor.iun)), "The defeated Doctor cannot be selected")
 	check(not choose(TargetRef.unit(enemy.iun)), "Doctor cannot select an enemy")
 	check(choose(TargetRef.unit(friend.iun)) and friend.actual_life == 4 and friend.max_life == 4, "Paid consequence survives source death and gives +1 current/+1 max")
 	check(Match.players[1].actions_remaining == 9, "Doctor consumes exactly one player action")
@@ -192,8 +193,7 @@ func test_sorcerer() -> void:
 	var sorcerer := add(CardCatalogue.mouse_sorcerer(1), 0)
 	var archer := add(CardCatalogue.rat_thief(1), 1)
 	sorcerer.actual_life = 1
-	check(Match.rules_runner.submit(sorcerer.effects[1], TargetRef.unit(sorcerer.iun)), "Sorcerer starts its explicit life cost")
-	pay_bundle(sorcerer)
+	check(Match.rules_runner.submit(sorcerer.effects[1], TargetRef.unit(sorcerer.iun)), "Sorcerer starts its fixed life cost")
 	check(sorcerer.max_life == 1 and sorcerer.t_state == Enum.t_state.DEFEATED, "Sorcerer loses one current and maximum life")
 	check(choose(TargetRef.unit(archer.iun)) and archer.bow_damage_bonus == 1 and archer.bow_range_bonus == 1, "Sorcerer's paid Bow upgrade survives its death")
 
@@ -224,7 +224,6 @@ func test_guinea_pig() -> void:
 	var other := add(CardCatalogue.rat_warrior(1), 2)
 	var enemy := add(CardCatalogue.rat_warrior(2), 3)
 	check(Match.rules_runner.submit(guinea.effects[0], TargetRef.unit(guinea.iun)), "Guinea Pig growth is activated")
-	pay_bundle(guinea)
 	check(guinea.actual_life == 1 and guinea.max_life == 3, "Growth costs current life and grants maximum only")
 	Match.action_event.emit(EffectEvent.new(&"hit", TargetRef.unit(other.iun), TargetRef.unit(enemy.iun), {"damage": 1}))
 	check(guinea.actual_life == 1, "Non-Wild contact does not heal Guinea Pig")

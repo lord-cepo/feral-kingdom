@@ -3,26 +3,31 @@ class_name RuleGuide
 extends RefCounted
 
 const STICKERS := {
-	"F": "F: Instant — resolves the attack immediately; normal costs still apply.",
-	"P": "P: Pierce — ignores the relevant defensive modifier. Magical Pierce bypasses Obsidian; physical Pierce does not bypass Titanium.",
-	"A": "[A]: spend one player action. [S] pays self-Stun; [AS] pays both. Unmarked actions default to [AS].",
+	"F": "Instant",
+	"P": "Pierce ignores defense modifiers",
+	"A": "spends one action",
 }
 
 const ENTRIES := {
-	"end": "End: resolve End effects and activation followups, then remove grants that last until this turn's End.",
-	"friend": "Friend: a deployed friendly unit unless a different zone is stated. Event watchers retain the historical participant described by the trigger.",
+	"first strike": "First Strike — strike first in Bash. If both have it, the attacker goes first.",
+	"steady": "Steady — ignore the opponent’s physical modifier in Bash.",
+	"fast": "Fast — resolve a new Bash in the action’s Combat window.",
+	"titanium": "Titanium — prevents physical contact, including Pierce.",
+	"obsidian": "Obsidian — prevents magical contact unless the attack has Pierce.",
+	"end": "End — resolve End effects, activate eligible units, then clean up.",
+	"friend": "Friend — your deployed unit, unless another zone is stated.",
 	"it": "It: the trigger's subject.",
 	"target": "Target: the trigger's object.",
 	"itself": "Itself: this unit.",
-	"friendly": "Friendly unit: a deployed unit belonging to you, unless a different zone is explicitly stated. Event watchers use their stated historical participants, including cards being returned to hand.",
-	"wild": "Wild: the unit's name contains Wild, case-insensitively. Name groups such as squirrel or mouse work the same way; they are not passive abilities or flags.",
-	"disable": "Disable: choose a unit in hand and change its state to defeated. Ownership is specified by the effect. It does not cause death triggers; health, counters and abilities are preserved.",
-	"reset": "Reset: restore printed health and effects; remove wounds, counters, upgrades and copied effects. The unit keeps its current location and state.",
-	"deploy": "Deploy: place a unit from hand on a legal vacant hex in a region you control. Requires a deployment and an action.",
-	"revive": "Revive: return a friendly defeated non-hero to hand at full health. Other counters and effects are preserved.",
-	"flee": "Flee: take one free use of this unit's Walk or Fly ability. A Bash defender leaving alive dodges the encounter; the attacker leaving does not count as an enemy fleeing from it.",
-	"upgrade": "Upgrade: choose a unit, then one numeric ability. M Upgrade N grants +M/+N permanently to that chosen ability. A following number is range; otherwise use the stated selector. Reset removes upgrades.",
-	"return": "return: move a deployed unit to its owner's hand inactive, preserving health, counters and abilities. Revive also causes return.",
+	"friendly": "Friendly — belongs to you. Defaults to deployed units.",
+	"wild": "Wild — a unit with Wild in its name, ignoring case.",
+	"disable": "Disable — defeat a unit in hand without triggering Death.",
+	"reset": "Reset — restore printed health and abilities. Clear acquired changes.",
+	"deploy": "Deploy — spend a deployment and action to place a unit on a vacant hex you control.",
+	"revive": "Revive: return another friendly defeated non-hero to hand at printed state and full printed health.",
+	"flee": "Flee — take a free Walk or Fly, or Walk up to a fixed distance when specified. Leaving a Bash dodges the encounter.",
+	"upgrade": "Upgrade — choose a unit and ability. M Upgrade N adds +M/+N until Reset.",
+	"return": "Return — put the unit in its owner’s hand at printed state.",
 	"c": "C — Cost: pay the written cost and spend an action.",
 	"ac": "AC — Additional cost: self-Stun as for a normal action, in addition to the written cost.",
 	"a": "[A]: spend one player action plus written costs; no implicit self-Stun.",
@@ -30,34 +35,37 @@ const ENTRIES := {
 	"as": "[AS]: spend one action and pay ordinary self-Stun plus written costs. Default for unmarked actions.",
 	"2s": "[2S]: pay two self-Stun instead of one, without spending a player action.",
 	"a2s": "[A2S]: spend one action and pay two self-Stun.",
-	"sacrifice": "Sacrifice: defeat a chosen deployed friend as payment. This emits Die and Sacrifice; costs are not refunded after later failure.",
-	"ember": "Ember: each counter adds one damage to the next declared Fire, then current Ember is consumed. Queued attacks keep their captured values.",
-	"projectile": "Projectile: ammunition paid by the printed action. Deploy can grant more; Reset does not itself cause Deploy.",
+	"sacrifice": "Sacrifice — defeat a chosen deployed friend to pay a cost.",
+	"ember": "Ember — spend all Ember on your next Fire for +1 damage each.",
+	"projectile": "Projectile — ammunition spent when the action calls for it.",
 	"control": "Control counters add to a unit's regional strength, separately from physical protection.",
 	"hit": "Hit: actual physical or magical attack contact, including zero damage; misses and immunity do not count.",
 	"wound": "Wound: positive life loss from attack contact. Nonlethal Fire creates Hit without Wound.",
+	"attacks": "Attacks: starts a Bash or uses Bow, Fire or Cannon. The trigger watches the declaration.",
 	"die": "Death: the unit is defeated. Its death triggers are captured before it leaves the board.",
 	"bash": "Bash: opposing units share a hex. The unit that entered is the attacker; the other is the defender.",
-	"move": "Walk: move up to the shown number of hexes along a legal route.",
+	"move": "Walk: follow a legal route up to the shown distance. A unit moves when it Walks or Flies on its own.",
 	"bow": "Bow: a physical ranged attack. The left number is damage; the right is range.",
-	"fire": "Fire: a magical attack resolved in the opposing combat window. It defeats a vulnerable target; survivors take no partial damage.",
+	"fire": "Fire — resolves in opposing Combat. Survivors lose no life.",
 	"cannon": "Cannon: a magical attack along a straight line, potentially hitting either player's units.",
-	"stun": "Stun: deactivate and add Stun counters; preserve all other counters, including shields. Stun counters prevent activation. At your Start, your hero removes one Stun from each friendly deployed unit.",
-	"shield": "Shield: temporary physical protection, consumed on contact unless contact is prevented.",
-	"mshield": "Magic shield: temporary magical protection, consumed on magical contact.",
-	"heart": "Life: current health and maximum health. Damage changes current health; upgrades can change both.",
+	"stun": "Stun — deactivate and block activation. Your hero removes one at your Start.",
+	"shield": "Shield: stored physical protection counters. Physical contact clears them, even at zero damage.",
+	"mshield": "Mshield: stored magical protection counters. Magical contact clears them, even at zero damage.",
+	"heart": "Life — current health on the left, maximum health on the right.",
 	"bomb": "Bomb: Fire ignites it, spreading blasts radially to affected hexes.",
-	"push": "Push: move the chosen target away from the acting unit.",
-	"pull": "Pull: move the chosen target toward the acting unit.",
+	"shifted": "Is moved — another unit causes a position change, such as Push, Pull or a card effect.",
+	"push": "Push: choose a target within range on a straight hex line from the acting unit. Move it farther away along that line.",
+	"pull": "Pull: choose a target within range on a straight hex line from the acting unit. Move it toward the acting unit along that line.",
 }
 
 ## Controller hover labels call this once on creation; BBCode tags/asset paths stay intact and existing links are never nested.
-## Keyword links use explicit underlines independently of link styling; icon entries share GameIcons' asset vocabulary.
+## Keyword links include named passives and attack declarations; icon entries share GameIcons' asset vocabulary.
 ## Sticker letters immediately preceding an icon are captured in its guide metadata, keeping each attack's explanation local to that occurrence.
 ## Bracketed A/S cost markers link independently; ordinary English articles are not mistaken for action costs.
-static func decorate(text: String) -> String:
+## Unit and trigger hover cards supply the rule owner's player ID for enemy colors.
+static func decorate(text: String, owner: int = 0) -> String:
 	var regex := RegEx.new()
-	regex.compile("\\[img[^\\]]*\\][^\\[]+\\[/img\\]|\\[[^\\]]*\\]|(?<=\\[lb\\])(?i:A2S|2S|AS|A|S)(?=\\[rb\\])|\\b(?i:upgrade|disable|reset|sacrific(?:e|ed)|embers?|projectiles?|control|hits?|wounds?|deploys?|revive|flees?|returns?|friends?|friendly|wild|itself|it|target|End|AC|C)\\b|⚔️")
+	regex.compile("\\[img[^\\]]*\\][^\\[]+\\[/img\\]|\\[[^\\]]*\\]|(?<=\\[lb\\])(?i:A2S|2S|AS|A|S)(?=\\[rb\\])|\\b(?i:enem(?:y|ies)|first strike|steady|fast|titanium|obsidian|upgrade|disable|reset|sacrific(?:e|ed)|embers?|projectiles?|control|attacks|hits?|wounds?|deploys?|revive|flees?|returns?|friends?|friendly|wild|itself|it|target|End|AC|C)\\b|⚔️")
 	var result := ""
 	var offset := 0
 	var link_depth := 0
@@ -83,7 +91,9 @@ static func decorate(text: String) -> String:
 		elif key == "wounds": key = "wound"
 		elif key == "embers": key = "ember"
 		elif key == "projectiles": key = "projectile"
-		if link_depth == 0 and ENTRIES.has(key):
+		if key in ["enemy", "enemies"] and owner in [1, 2]:
+			result += EffectText._owner_color(token, 3 - owner)
+		elif link_depth == 0 and ENTRIES.has(key):
 			var display := token if token.begins_with("[img") or key == "bash" else "[u]%s[/u]" % token
 			var guide_key := key
 			if token.begins_with("[img"):
@@ -99,13 +109,15 @@ static func decorate(text: String) -> String:
 		offset = found.get_end()
 	return result + text.substr(offset)
 
-## Controller glossary requests resolve one icon/keyword plus only its displayed stickers, each on a separate line.
+## Controller glossary requests resolve one icon or keyword and append a compact list of its displayed stickers.
 ## Unknown metadata returns empty; standard entries and existing links keep their previous behavior.
 static func description(key: String) -> String:
 	var parts := key.split(":")
 	if not ENTRIES.has(parts[0]): return ""
 	var text: String = ENTRIES[parts[0]]
 	if parts.size() > 1:
+		var stickers := PackedStringArray()
 		for marker in ["F", "P", "A"]:
-			if parts[1].contains(marker): text += "\n" + STICKERS[marker]
+			if parts[1].contains(marker): stickers.append(STICKERS[marker])
+		if not stickers.is_empty(): text += " · " + ", ".join(stickers)
 	return text

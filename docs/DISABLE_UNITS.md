@@ -12,13 +12,13 @@ implemented definitions.
 | --- | --- | --- | --- | --- |
 | Wild Mara | 2 | Intermediate | Cannon 2, range 2; implicit Walk 1 | Friend is disabled: +1 Cannon +0 to itself. Enemy is disabled: +1 current life/+1 maximum life to itself. |
 | Wild Tamia | 2 | Starting | Walk 2; disable a non-hero friend in hand, then +1 deployment | — |
-| Wild Grey Squirrel | 1 | Starting/Intermediate | Walk 2; [A] +1 Bow damage/+0 range to an adjacent friend until End | — |
+| Wild Grey Squirrel | 1 | Starting/Intermediate | Walk 2 and [S] +1 Bow damage/+0 range to an adjacent friend until End | — |
 
 Tamia's conversion pays ordinary self-Stun 1 and one action. Disable is the
 first consequence, followed by its owner's deployment grant, not a custom
 atomic cost. Only a friendly undeployed non-hero is selectable; troops and
-temples qualify, heroes/deployed/defeated/enemy cards do not. Disable preserves
-health, properties and abilities, emits Disable once, and does not emit Die or
+temples qualify, heroes/deployed/defeated/enemy cards do not. Disable moves the
+printed hand card to defeated, emits Disable once, and does not emit Die or
 Return. The resource grant does not refund an action or automatically deploy
 anything. No eligible hand card means no legal command.
 
@@ -79,7 +79,7 @@ var support := Collection.grant_action_values(&"bow", [1, 0], adjacent, false, t
 | Tamia → `WildRules.disable_for_deployment()` | Build normal activity cost and ordered Disable/resource consequences using existing verbs. |
 | Grey → `WildRules.prepare_bow()` → `Collection.grant_action_values()` | Build exact adjacency and the A sticker; existing Action/TimedGrant/End cleanup owns lifetime. |
 | `QuerySelector.excluded_type` → `matches()` | Enforce the non-hero restriction without guessing troop-only eligibility. |
-| `EffectText` / local action menu / hex labels | Show Cannon growth and A support with neutral printed grants and magenta applied M/N values. |
+| `EffectText` / local action menu / hex labels | Show Cannon growth and [S] Bow support with neutral printed grants and magenta applied M/N values. |
 | Board → `BoardCharacter` / playground manifest | Reuse native directional art, walk/rise/action lengths and existing finite animation timing. |
 
 ## Art and regression coverage

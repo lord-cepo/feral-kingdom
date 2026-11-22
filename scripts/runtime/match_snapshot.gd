@@ -8,10 +8,10 @@ const FORMAT_VERSION := 3
 static func exists() -> bool:
 	return FileAccess.file_exists(SNAPSHOT_PATH)
 
-## Allows saving only at an idle Action boundary with no continuation awaiting a choice.
+## Allows saving only during an ongoing match at an idle Action boundary.
 ## LocalMatchController disables Save while rules or a provisional sacrificed-hero loss remain unresolved.
 static func can_save() -> bool:
-	return Match.phase == Match.Phase.ACTION and not Match.rules_runner.busy() and Match.sacrificed_heroes.is_empty()
+	return Match.winner == 0 and Match.phase == Match.Phase.ACTION and not Match.rules_runner.busy() and Match.sacrificed_heroes.is_empty()
 
 ## Writes an idle Action-phase match as JSON for the next Godot launch.
 ## The Save Snapshot HUD button calls this; unresolved runner work is rejected.
@@ -56,6 +56,7 @@ static func _capture_state() -> Dictionary:
 			"ability_upgrades": _capture_ability_upgrades(unit),
 			"active": unit.active,
 			"last_displaced_turn": unit.last_displaced_turn,
+			"trigger_turns": unit.trigger_turns.duplicate(),
 			"hex": unit.ihx,
 			"state": int(unit.t_state),
 			"bow_damage_bonus": unit.bow_damage_bonus,
@@ -102,7 +103,7 @@ static func _capture_state() -> Dictionary:
 		"bashes": _capture_bashes(),
 	}
 
-## Checks snapshot version, roster identity, map IDs, counters, Bow bonuses, pending next-Fire sticker names and phase before mutation.
+## Checks version, roster/map identity, limited-trigger ledger, properties, grants and phase before mutation.
 ## load_snapshot() uses this guard so a stale file cannot partially overwrite a new match.
 ## A shorter unchanged roster prefix is compatible when catalogue additions only append units; new units remain in their initial hand state.
 static func _is_compatible_snapshot(state: Dictionary) -> bool:
@@ -118,6 +119,7 @@ static func _is_compatible_snapshot(state: Dictionary) -> bool:
 		var saved: Variant = state.units[index]
 		if not saved is Dictionary or str(saved.get("uuid", "")) != Match.army[index].uuid: return false
 		if not _contains_only_dictionaries(saved.get("props")): return false
+		if not saved.get("trigger_turns", {}) is Dictionary: return false
 		if not _contains_only_dictionaries(saved.get("max_life_changes", [])): return false
 		if saved.has("timed_grants") and not _valid_timed_grants(saved.timed_grants): return false
 		if not saved.get("next_fire_stickers", []) is Array: return false
@@ -195,10 +197,11 @@ static func _valid_effect_copies(value: Variant, version: int = FORMAT_VERSION) 
 		if category == &"props" and definitions[index].increment != Enum.p_increment.FLAG: return false
 	return true
 
-## Applies saved properties/grants, migrates version-one Bow bonuses, rebuilds combat records, and recomputes control.
+## Restores properties, grants and per-unit trigger usage; also migrates old Bow bonuses and rebuilds combat/control.
 ## Restores printed arrays and real passive copies, discarding legacy Wild flags/copies; Reset baselines remain separate from runtime state.
 ## Only saved roster-prefix entries are overwritten, preserving appended catalogue units in hand while retaining old unit IDs and combat history.
 ## Restores next-Fire stickers and action ledgers after Bash records; legacy saves default missing sticker records to empty.
+## Hand entries load as printed cards even when an older snapshot stored acquired field state on them.
 static func _apply_state(state: Dictionary) -> void:
 	Match.rules_runner.reset()
 	Match.sacrificed_heroes.clear()
@@ -210,12 +213,16 @@ static func _apply_state(state: Dictionary) -> void:
 	for index in state.units.size():
 		var unit: UnitInfo = Match.army[index]
 		var saved: Dictionary = state.units[index]
+		if int(saved.state) == Enum.t_state.UNDEPLOYED:
+			unit.enter_hand()
+			continue
 		unit.reset_printed_state()
 		unit.max_life = int(saved.get("max_life", unit.max_life))
 		unit.max_life_changes.assign(saved.get("max_life_changes", []))
 		unit.actual_life = int(saved.life)
 		unit.active = bool(saved.active)
 		unit.last_displaced_turn = int(saved.get("last_displaced_turn", -1))
+		unit.trigger_turns = saved.get("trigger_turns", {}).duplicate()
 		unit.ihx = int(saved.hex)
 		unit.t_state = int(saved.state)
 		unit.props = _restore_props(saved.props)
@@ -227,6 +234,7 @@ static func _apply_state(state: Dictionary) -> void:
 		if unit.bow_range_bonus == 0 and int(saved.get("bow_range_bonus", 0)) != 0:
 			unit.add_bow_counters(0, int(saved.bow_range_bonus))
 	for index in state.units.size():
+		if Match.army[index].t_state == Enum.t_state.UNDEPLOYED: continue
 		for copy: Dictionary in state.units[index].get("copied_effects", []):
 			if _legacy_name_copy(copy, int(state.version)): continue
 			var source := Match.get_unit(int(copy.unit))
@@ -238,6 +246,7 @@ static func _apply_state(state: Dictionary) -> void:
 			Match.army[index].add_effect_copy(option)
 	for index in state.units.size():
 		var unit := Match.get_unit(index)
+		if unit.t_state == Enum.t_state.UNDEPLOYED: continue
 		for upgrade: Dictionary in state.units[index].get("ability_upgrades", []):
 			unit.ability_upgrades.append({"effect": unit.effects[int(upgrade.index)], "damage": int(upgrade.damage), "range": int(upgrade.range), "source": str(upgrade.get("source", "Effect"))})
 	for player_id in [1, 2]:
@@ -380,14 +389,14 @@ static func _capture_gore_attacks() -> Array[Dictionary]:
 	return result
 
 ## Captures declared Cannon shots and queued Bomb blasts awaiting a combat window.
-## _capture_state() preserves projectile values, mode, chain attribution, and lit Bomb centers.
+## _capture_state() preserves projectile values, chain attribution, lit centers and inert bomb provenance needed by Defuse.
 static func _capture_cannon_attacks() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for attack: CannonAttack in Match.pending_cannon_attacks:
 		result.append({"source": attack.source_id, "owner": attack.owner,
 			"target": attack.target_hex, "amount": attack.amount, "pierce": attack.pierce,
 			"instant": attack.instant, "explosion": attack.explosion,
-			"bomb_hex": attack.bomb_hex,
+			"bomb_hex": attack.bomb_hex, "bomb_owner": attack.bomb_owner, "bomb_pierce": attack.bomb_pierce,
 			"chain_owner": attack.chain_owner, "resolved": attack.resolved})
 	return result
 
@@ -401,7 +410,7 @@ static func _capture_bashes() -> Array[Dictionary]:
 			"resolved": bash.resolved})
 	return result
 
-## Recreates bombs, captured attacks, and Bash records without emitting new events.
+## Recreates bombs, attacks (including restorable lit-bomb provenance), and Bash records without emitting events.
 ## _apply_state() calls this after restoring unit and player state; older snapshots
 ## without Bomb center metadata retain -1 rather than inventing a lit marker location.
 static func _restore_combat_records(state: Dictionary) -> void:
@@ -464,6 +473,8 @@ static func _restore_combat_records(state: Dictionary) -> void:
 		attack.instant = bool(saved.instant)
 		attack.explosion = bool(saved.explosion)
 		attack.bomb_hex = int(saved.get("bomb_hex", -1))
+		attack.bomb_owner = int(saved.get("bomb_owner", saved.owner))
+		attack.bomb_pierce = bool(saved.get("bomb_pierce", saved.pierce))
 		attack.chain_owner = int(saved.chain_owner)
 		attack.resolved = bool(saved.resolved)
 		Match.pending_cannon_attacks.append(attack)

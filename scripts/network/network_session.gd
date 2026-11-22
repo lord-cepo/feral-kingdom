@@ -71,7 +71,7 @@ func connect_relay(name: String) -> void:
 	var error := socket.connect_to_url(URL)
 	if error != OK: notice.emit("Could not connect to the relay (%s)." % error)
 
-## Poll packets, receipt-paced sends and mirrored commands; snapshots are taken only at settled Action boundaries.
+## Poll receipts and mirrored commands; settled Action checkpoints remain local until bootstrap or reconnect requests them.
 func _process(delta: float) -> void:
 	socket.poll()
 	var state := socket.get_ready_state()
@@ -142,7 +142,7 @@ func _process(delta: float) -> void:
 			base_revision = revision
 			history.clear()
 			_persist()
-			_send_data("state", {"op": "checkpoint", "revision": revision, "state": base})
+
 
 ## Lobby controls use the same authenticated connection; no gameplay operation is performed here.
 func lobby_command(message: Dictionary) -> void:
@@ -282,7 +282,7 @@ func _execute(intent: Dictionary) -> bool:
 	applying = false
 	return success
 
-## Stable stage signatures let a replica wait for its own finite visuals before applying the next confirmed choice.
+## Authorization and replay compare a stage digest including locally derived candidates; candidate identities never cross the wire.
 func _signature() -> String:
 	var runner := Match.rules_runner
 	var run := runner.active
@@ -297,7 +297,7 @@ func _signature() -> String:
 			result.phrase = int(run.current.status)
 			result.verb = String(run.current.phrase.verb.name)
 			result.candidates = run.current.candidates.map(encode_ref)
-	return JSON.stringify(result)
+	return JSON.stringify(result).sha256_text()
 
 ## Encode stable reference identities, including counter/ability properties; never serialize definition objects or mutable owners/positions.
 func encode_ref(ref: TargetRef) -> Dictionary:

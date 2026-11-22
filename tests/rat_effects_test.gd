@@ -9,6 +9,7 @@ func _ready() -> void:
 	Match.action_event.connect(func(event: EffectEvent) -> void: events.append(event))
 	test_reset()
 	test_return_to_hand()
+	test_legacy_hand_snapshot()
 	test_return_choice_and_bash()
 	test_stun_preserves_counters()
 	test_dark_mage()
@@ -27,23 +28,35 @@ func _ready() -> void:
 	print("Rat effects: %d checks, %d failures" % [checks, failures])
 	get_tree().quit(0 if failures == 0 else 1)
 
-## Board Return preserves acquired state, emits one friendly synergy, and rejects off-board/repeated choices without death/reset events.
+## Board Return washes acquired state, emits one friendly synergy, and rejects off-board/repeated choices without death/reset events.
 func test_return_to_hand() -> void:
 	fixture()
 	var warrior := add(CardCatalogue.rat_warrior(1), 0)
 	var friend := plain(1, 1)
 	var enemy := plain(2, 2)
 	friend.actual_life = 2
+	friend.max_life = 8
 	counter(friend, &"physical").value = 3
 	counter(friend, &"temp_magical").value = 4
 	counter(friend, &"stun").value = 2
 	var source := TargetRef.unit(warrior.iun)
 	var target := TargetRef.unit(friend.iun)
 	var definitions := friend.effects.duplicate()
+	friend.effects.append(Collection.movement(3))
+	friend.add_ability_upgrade(definitions[0], 2, 0, source)
+	friend.timed_grants.append(TimedGrant.action_values(1, source, &"move", [2], 1, 3))
+	friend.next_fire_stickers.append(&"pierce")
+	friend.last_displaced_turn = 2
+	friend.trigger_turns["test"] = 2
 	check(Action.return_to_hand(source, target), "Return accepts a deployed ally")
 	check(friend.t_state == Enum.t_state.UNDEPLOYED and friend.ihx == -1 and not friend.active and friend.player == 1, "Return enters owner's hand inactive with stable identity")
-	check(friend.actual_life == 2 and friend.max_life == 5 and friend.effects == definitions, "Return preserves wounds and abilities")
-	check(counter(friend, &"physical").value == 3 and counter(friend, &"temp_magical").value == 4 and counter(friend, &"stun").value == 2, "Return preserves counters rather than resetting")
+	check(friend.actual_life == 5 and friend.max_life == 5 and friend.effects == definitions, "Return restores printed health and abilities")
+	check(counter(friend, &"physical").value == 0 and counter(friend, &"temp_magical").value == 0 and counter(friend, &"stun").value == 0, "Return clears permanent, temporary and activity counters")
+	check(friend.ability_upgrades.is_empty() and friend.timed_grants.is_empty() and friend.next_fire_stickers.is_empty(), "Return clears acquired upgrades and pending grants")
+	check(friend.last_displaced_turn == -1 and friend.trigger_turns.is_empty(), "Hand entry clears field-instance history")
+	check(not Action.change_counter(source, TargetRef.property(target, &"physical"), 1)
+		and not SynergyActions.add_counter(source, target, &"Soul", 1)
+		and not Action.up_life(source, target, 1, 1), "Field mutations cannot put counters or life changes on a hand card")
 	check(counter(warrior, &"Soul").value == 1, "Real board Return awards one friendly Soul")
 	check(not Action.return_to_hand(source, target) and counter(warrior, &"Soul").value == 1, "Repeated Return cannot publish another occurrence")
 	check(Action.return_to_hand(source, TargetRef.unit(enemy.iun)) and enemy.player == 2, "Unrestricted Return accepts enemy and preserves its owner")
@@ -57,6 +70,26 @@ func test_return_to_hand() -> void:
 	var hero := plain(2, 3)
 	hero.type = Enum.type.HERO
 	check(Action.return_to_hand(source, TargetRef.unit(hero.iun)) and Match.winner == 0, "Returning a hero is not defeating it")
+	check(Match.deploy(friend.iun, 1) and counter(friend, &"stun").value == 1 and friend.actual_life == 5, "Redeployment starts at printed health with only the new deployment Stun")
+	check(Action.return_to_hand(source, source) and counter(warrior, &"Soul").value == 0, "A returning watcher loses its own counters and cannot observe from hand")
+
+## A legacy snapshot may carry field mutations on a hand card; its other deployed records still restore normally.
+func test_legacy_hand_snapshot() -> void:
+	fixture()
+	var field := plain(1, 0)
+	var hand := add(CardCatalogue.rat_warrior(1), -1)
+	hand.max_life = 7
+	hand.actual_life = 2
+	counter(hand, &"Soul").value = 4
+	hand.next_fire_stickers.append(&"instant")
+	counter(field, &"physical").value = 2
+	var snapshot := preload("res://scripts/runtime/match_snapshot.gd")
+	var saved: Dictionary = snapshot._capture_state()
+	check(snapshot._is_compatible_snapshot(saved), "An older hand payload remains loadable")
+	snapshot._apply_state(saved)
+	check(hand.max_life == 3 and hand.actual_life == 3 and counter(hand, &"Soul").value == 0
+		and hand.next_fire_stickers.is_empty(), "Restore discards legacy acquired hand state")
+	check(counter(field, &"physical").value == 2 and field.t_state == Enum.t_state.DEPLOYED, "Restore keeps deployed counters")
 
 ## Managed Return uses selector ownership, exact UNIT choice and standard cost policy; leaving a Bash cancels it without Flee.
 func test_return_choice_and_bash() -> void:
@@ -190,15 +223,38 @@ func test_dark_mage() -> void:
 	check(choose(TargetRef.unit(enemy.iun)) and enemy.actual_life == 5, "Captured death source resets the chosen enemy")
 	check(not Match.rules_runner.busy(), "Dark Mage trigger completes exactly once")
 
-## Wild Rat amplifies friendly death abilities, stacks additively and never duplicates enemy deaths or emits extra Die events.
+## Counts aura predicate calls to distinguish an irrelevant read from an eligible death capture.
+class CountAuraReads extends Condition:
+	var calls := 0
+
+	## The Wild Rat fixture installs this always-true source condition.
+	func test(_ctx: RuleContext) -> bool:
+		calls += 1
+		return true
+
+## Wild Rat amplifies friendly death abilities only from the field and skips predicates during ordinary actions.
 func test_wild_rat() -> void:
 	fixture()
-	add(CardCatalogue.wild_rat(1), 0)
+	var rat := add(CardCatalogue.wild_rat(1), 0)
+	var reads := CountAuraReads.new()
+	rat.continuous_effects[0].source_condition = reads
 	add(CardCatalogue.wild_rat(1), 1)
+	var reserve_rat := add(CardCatalogue.wild_rat(1), -1)
+	var reserve_reads := CountAuraReads.new()
+	reserve_rat.continuous_effects[0].source_condition = reserve_reads
 	var dying := add(CardCatalogue.pine_processionary(1), 2)
+	var dying_ref := TargetRef.unit(dying.iun)
+	check(dying.effective_action_values(&"move", [1]) == [1] and not dying.has_effective_flag(&"must_bash"),
+		"Death amplification contributes neither movement values nor passive flags")
+	Match.action_event.emit(EffectEvent.new(&"deploy", dying_ref, TargetRef.hex(2)))
+	var cues := preload("res://scripts/board/continuous_cues.gd").new()
+	check(cues.active_rules(rat).is_empty(), "Live-values indicator does not query event-only auras")
+	cues.free()
+	check(reads.calls == 0 and reserve_reads.calls == 0, "Unrelated queries and Deploy never evaluate either death aura")
 	var before := Match.players[1].deployments_remaining
-	Match.defeat(TargetRef.unit(dying.iun))
+	Match.defeat(dying_ref)
 	check(Match.players[1].deployments_remaining == before + 6, "Two friendly Wild Rats add two independent +2 deploy death activations")
+	check(reads.calls == 1 and reserve_reads.calls == 0, "Only the field aura is evaluated on matching death")
 	check(events.filter(func(e: EffectEvent) -> bool: return e.action == &"die").size() == 1, "Death amplification does not duplicate the death occurrence")
 	var enemy := add(CardCatalogue.pine_processionary(2), 3)
 	before = Match.players[2].deployments_remaining
@@ -219,11 +275,14 @@ func test_musketeer() -> void:
 	var friend := plain(1, -1)
 	friend.t_state = Enum.t_state.DEFEATED
 	friend.actual_life = 0
+	friend.max_life = 7
+	counter(friend, &"physical").value = 2
 	var enemy := plain(2, 2)
 	Match.defeat(TargetRef.unit(enemy.iun))
 	check(not choose(TargetRef.unit(enemy.iun)), "Musketeer cannot revive the opposing casualty")
 	check(choose(TargetRef.unit(friend.iun)), "Musketeer chooses a friendly defeated unit")
-	check(friend.t_state == Enum.t_state.UNDEPLOYED and friend.actual_life == friend.max_life and not friend.active, "Revive returns full-health inactive card to hand")
+	check(friend.t_state == Enum.t_state.UNDEPLOYED and friend.actual_life == 5 and friend.max_life == 5
+		and not friend.active and counter(friend, &"physical").value == 0, "Revive returns an inactive printed card to hand")
 	check(events.filter(func(e: EffectEvent) -> bool: return e.action == &"return_to_hand").size() == 1, "Revive emits one Return occurrence")
 	friend.type = Enum.type.HERO
 	friend.t_state = Enum.t_state.DEFEATED

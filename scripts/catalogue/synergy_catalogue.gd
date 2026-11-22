@@ -58,7 +58,7 @@ static func grey_squirrel_crossbowman(owner: int) -> UnitInfo:
 	SynergyRules.resource(unit, UnitInfo.PROJECTILE_COUNTER)
 	unit.trigger_effects.append(SynergyRules.on_deploy(UnitInfo.PROJECTILE_COUNTER, 2))
 	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.bow(4, 2), Selectors.BowTargets.new(2)),
-		1, true, SynergyRules.spend(UnitInfo.PROJECTILE_COUNTER, 1)))
+		1, true, SynergyRules.spend(UnitInfo.PROJECTILE_COUNTER, 1), true))
 	return unit
 
 ## Pikeman contributes one live player action while bashing; Player retains spent actions independently to prevent Bash reentry refills.
@@ -92,7 +92,7 @@ static func grey_squirrel_musketeer(owner: int) -> UnitInfo:
 	SynergyRules.resource(unit, UnitInfo.PROJECTILE_COUNTER)
 	unit.trigger_effects.append(SynergyRules.on_deploy(UnitInfo.PROJECTILE_COUNTER, 2))
 	unit.effects.append(SynergyRules.command(SynergyRules.phrase(Verbs.cannon(3, 3), DistanceSelector.within(3)),
-		1, true, SynergyRules.spend(UnitInfo.PROJECTILE_COUNTER, 1)))
+		1, true, SynergyRules.spend(UnitInfo.PROJECTILE_COUNTER, 1), true))
 	unit.trigger_effects.append(award_on(&"wound", UnitInfo.PROJECTILE_COUNTER, 1, null, WoodlandRules.friends()))
 	return unit
 

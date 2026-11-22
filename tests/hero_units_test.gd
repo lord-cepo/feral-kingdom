@@ -1,7 +1,7 @@
 ## Reuses the approved-roster fixture helpers; this scene runs only the three new hero regressions when explicitly requested with TEST.
 extends "res://tests/synergy_units_test.gd"
 
-## Dedicated entry point covers each new command, aura, sacrifice capture and owner-paired registration without running inherited scenarios.
+## Dedicated entry point covers the crowned heroes and the shared hover and hex formatting conventions.
 func _ready() -> void:
 	Match.action_event.connect(record)
 	test_king_supply()
@@ -9,11 +9,13 @@ func _ready() -> void:
 	test_king_loaded_aura()
 	test_jerboa_commands()
 	test_jerboa_aura()
+	test_continuous_cue_eligibility()
 	test_queen_healing()
 	test_queen_sacrifice()
 	test_queen_aura()
 	test_heroes_registered()
 	test_hover_conventions_and_mshield()
+	test_hex_effect_labels()
 	test_additional_hover_conventions()
 	test_compound_wording()
 	test_final_trigger_wording()
@@ -74,15 +76,22 @@ func test_king_loaded_aura() -> void:
 	king.t_state = Enum.t_state.UNDEPLOYED
 	check(aura.evaluate(king.iun, friend.iun) == Vector2i.ZERO, "Off-board king cannot supply live loaded protection")
 
-## Khan's independent Push and Stun commands target enemies only, using normal movement and hostile Stun production paths.
+## The King's Push accepts either owner and rejects SELF and out-of-range targets; Stun remains hostile.
 func test_jerboa_commands() -> void:
 	fixture()
 	var king := add(HeroCatalogue.jerboa_king(1), 0)
 	var enemy := plain(2, 2)
 	var friend := plain(1, 1)
 	check(Match.rules_runner.submit(king.effects[1], TargetRef.unit(king.iun)) and choose(TargetRef.unit(king.iun)), "Khan pays for Push")
-	check(not choose(TargetRef.unit(friend.iun)) and choose(TargetRef.unit(enemy.iun)), "Push accepts the enemy, never a friend")
+	check(not choose(TargetRef.unit(king.iun)) and choose(TargetRef.unit(enemy.iun)), "Push rejects SELF and accepts an enemy")
 	check(enemy.ihx == 3 and enemy.last_displaced_turn == Match.turn_number, "Push displaces exactly one and records current-turn history")
+	fixture()
+	king = add(HeroCatalogue.jerboa_king(1), 0)
+	friend = plain(1, 2)
+	var distant_friend := plain(1, 4)
+	check(Match.rules_runner.submit(king.effects[1], TargetRef.unit(king.iun)) and choose(TargetRef.unit(king.iun)), "King pays for friendly Push")
+	check(not choose(TargetRef.unit(distant_friend.iun)) and choose(TargetRef.unit(friend.iun)), "Push accepts an in-range friend")
+	check(friend.ihx == 3 and friend.timed_grants.size() == 1, "Friendly Push moves the friend one hex and triggers the King's support")
 	fixture()
 	king = add(HeroCatalogue.jerboa_king(1), 0)
 	enemy = plain(2, 1)
@@ -92,34 +101,72 @@ func test_jerboa_commands() -> void:
 	check(not choose(TargetRef.unit(friend.iun)) and not choose(TargetRef.unit(distant.iun)), "Stun rejects friends and nonadjacent enemies")
 	check(choose(TargetRef.unit(enemy.iun)) and enemy._counter_value(&"stun") == 1 and not enemy.active, "Pin down Stuns the exact enemy for one")
 
-## Friendly normal Move grants +2 physical through End once, independently of location, Bash and later source departure.
+## Shifted rewards the displaced friend, excludes voluntary movement/enemies, and lasts through the source enemy End.
 func test_jerboa_aura() -> void:
 	fixture()
 	var king := add(HeroCatalogue.jerboa_king(1), 0)
-	var friend := plain(1, 4)
-	var enemy := plain(2, 3)
-	var before := friend.physical_modifier
-	Match.action_event.emit(EffectEvent.new(&"push", TargetRef.unit(king.iun), TargetRef.unit(friend.iun)))
-	Match.action_event.emit(EffectEvent.new(&"fly", TargetRef.unit(friend.iun), TargetRef.hex(4)))
-	Match.action_event.emit(EffectEvent.new(&"move", TargetRef.unit(friend.iun), TargetRef.hex(4), {"success": false}))
-	Match.action_event.emit(EffectEvent.new(&"move", TargetRef.unit(enemy.iun), TargetRef.hex(3)))
-	check(friend.timed_grants.is_empty() and enemy.timed_grants.is_empty(), "Forced movement, Fly, cancelled Move and enemy Move do not qualify")
-	Match.action_event.emit(EffectEvent.new(&"move", TargetRef.unit(friend.iun), TargetRef.hex(4)))
-	check(friend.physical_modifier == before + 2 and friend._counter_value(&"physical") == 0, "Friendly normal Move gains derived +2 physical without stored counters")
-	Match.action_event.emit(EffectEvent.new(&"move", TargetRef.unit(friend.iun), TargetRef.hex(4)))
-	check(friend.timed_grants.size() == 1 and friend.physical_modifier == before + 2, "Repeated Move refreshes the same support instead of stacking")
+	var friend := plain(1, 2)
+	var enemy := plain(2, 4)
+	Match.action_event.emit(EffectEvent.new(&"move", TargetRef.unit(friend.iun), TargetRef.hex(2)))
+	Match.action_event.emit(EffectEvent.new(&"fly", TargetRef.unit(friend.iun), TargetRef.hex(2)))
+	Match.action_event.emit(EffectEvent.new(&"shifted", TargetRef.unit(enemy.iun), TargetRef.hex(4)))
+	Match.action_event.emit(EffectEvent.new(&"shifted", TargetRef.unit(friend.iun), TargetRef.hex(2), {"success": false}))
+	check(friend.timed_grants.is_empty() and enemy.timed_grants.is_empty(), "Walk, Fly, failed shifts and enemy shifts never award support")
+	check(CombatResolver.displace(TargetRef.unit(king.iun), TargetRef.unit(friend.iun), 1, 2, false, true), "Push changes a friend's actual hex")
+	check(friend.ihx == 3 and friend.timed_grants.size() == 1, "Successful Push emits Shifted for its recipient")
+	check(friend.timed_grants[0].parameters == [2, 0] and friend._counter_value(&"physical") == 0, "Shift gives derived +2/+0 without counters")
+	check(friend.timed_grants[0].expires_player == 2 and friend.timed_grants[0].expires_turn == Match.turn_number + 1, "Own-turn shift captures the next enemy End")
+	check(CombatResolver.displace(TargetRef.unit(king.iun), TargetRef.unit(friend.iun), 1, 3, true, true), "Pull shifts the same recipient back")
+	check(friend.ihx == 2 and friend.timed_grants.size() == 1, "Repeated Push/Pull refreshes without stacking")
+	var shifted_count := events.filter(func(event: EffectEvent) -> bool: return event.action == &"shifted").size()
+	check(not CombatResolver.displace(TargetRef.unit(king.iun), TargetRef.unit(friend.iun), 0, 2, false, true), "Zero displacement is illegal")
+	check(events.filter(func(event: EffectEvent) -> bool: return event.action == &"shifted").size() == shifted_count, "Failed displacement never emits Shifted")
 	king.t_state = Enum.t_state.UNDEPLOYED
-	check(friend.physical_modifier == before + 2, "Already-granted movement support survives source departure")
+	check(friend.timed_grants.size() == 1, "Paid shifted support survives source departure")
 	var snapshot := preload("res://scripts/runtime/match_snapshot.gd")
 	var saved: Dictionary = snapshot._capture_state()
 	friend.timed_grants.clear()
 	snapshot._apply_state(saved)
-	check(friend.timed_grants.size() == 1 and friend.timed_grants[0].kind == TimedGrant.Kind.MODIFIERS, "Snapshot restores the modifier grant's typed identity")
-	Match.expire_timed_grants(3 - Match.active_player, Match.turn_number)
-	check(friend.timed_grants.size() == 1, "Other player's cleanup cannot expire captured support")
-	Match.expire_timed_grants(Match.active_player, Match.turn_number)
-	check(friend.timed_grants.is_empty(), "Captured End cleanup expires movement support")
+	check(friend.timed_grants.size() == 1 and friend.timed_grants[0].kind == TimedGrant.Kind.MODIFIERS, "Snapshot retains shifted grant and enemy expiry")
+	Match.expire_timed_grants(1, Match.turn_number)
+	check(friend.timed_grants.size() == 1, "Own End preserves shifted support")
+	Match.expire_timed_grants(2, Match.turn_number + 1)
+	check(friend.timed_grants.is_empty(), "Enemy End cleanup expires shifted support")
+	fixture()
+	king = add(HeroCatalogue.jerboa_king(1), 0)
+	friend = plain(1, 2)
+	enemy = plain(2, 4)
+	Match.active_player = 2
+	check(CombatResolver.displace(TargetRef.unit(enemy.iun), TargetRef.unit(friend.iun), 1, 2, false, true), "Enemy Push still rewards the king's displaced friend")
+	check(friend.timed_grants[0].expires_player == 2 and friend.timed_grants[0].expires_turn == Match.turn_number, "Enemy-turn shift expires at this enemy End")
 
+## Continuous star eligibility shares source/recipient conditions, ownership and deployment without creating rule mutations.
+func test_continuous_cue_eligibility() -> void:
+	fixture()
+	var observer := preload("res://scripts/board/continuous_cues.gd").new()
+	var king := add(HeroCatalogue.grey_squirrel_king(1), 1)
+	var friend := plain(1, 2)
+	var enemy := plain(2, 0)
+	check(observer.active_rules(king).is_empty(), "Continuous star absent without a loaded eligible friend")
+	enemy._change_action_counter(UnitInfo.PROJECTILE_COUNTER, 1)
+	check(observer.active_rules(king).is_empty(), "Loaded enemy does not light the source's aura star")
+	friend._change_action_counter(UnitInfo.PROJECTILE_COUNTER, 1)
+	check(observer.active_rules(king).size() == 1, "Eligible friend lights exactly the source's continuous rule")
+	friend.ihx = 4
+	check(observer.active_rules(king).is_empty(), "Leaving range removes continuous star eligibility")
+	friend.ihx = 2
+	friend._change_action_counter(UnitInfo.PROJECTILE_COUNTER, -1)
+	check(observer.active_rules(king).is_empty(), "Losing recipient condition removes continuous star eligibility")
+	friend._change_action_counter(UnitInfo.PROJECTILE_COUNTER, 1)
+	king.t_state = Enum.t_state.UNDEPLOYED
+	check(observer.active_rules(king).is_empty(), "Off-board sources never retain live continuous stars")
+	var queen := add(HeroCatalogue.marmot_queen(1), 1)
+	check(observer.active_rules(queen).is_empty(), "Full-life source condition leaves star absent")
+	queen.actual_life -= 1
+	check(observer.active_rules(queen).size() == 1, "Wounded source lights continuous star")
+	queen.actual_life = queen.max_life
+	check(observer.active_rules(queen).is_empty(), "Healing source removes continuous star eligibility")
+	observer.free()
 ## Queen heals another wounded friend within two, clamps actual life and rejects SELF/enemy/distant targets.
 func test_queen_healing() -> void:
 	fixture()
@@ -186,11 +233,36 @@ func test_heroes_registered() -> void:
 		var text := " ".join(EffectText.unit_lines(unit))
 		check(not text.contains("Unrecognized"), "Hero hover text recognizes every authored condition")
 		if index == 0: check(text.to_lower().contains("projectile") and text.contains("adjacent friend"), "King text uses concise ammunition/friend wording")
-		if index == 1: check(text.contains("moved friends have") and text.contains("until End"), "Khan text exposes changed movement/expiry rule")
+		if index == 1: check(text.contains("friend is moved: it has") and text.contains("until enemy End"), "Khan text exposes forced movement and expiry")
 		if index == 2: check(text.contains("sacrificed within 2"), "Queen text exposes sacrifice range without duplicate guards")
 	var roster := CardCatalogue.starter_army()
-	check(roster.size() == 172 and CardCatalogue.all_units(2).size() == 86, "Both players receive the three new hero alternatives")
+	check(roster.size() == 212 and CardCatalogue.all_units(2).size() == 106, "Both players receive the three hero alternatives in the expanded roster")
 	check(roster[0].uuid == "squirrel-king-p1" and roster[3].uuid == "mole-artificer-p2", "Appending heroes preserves old IDs")
+
+## Board summaries cover the playable roster and preserve the examples that distinguish hex text from full hover text.
+func test_hex_effect_labels() -> void:
+	var formatter := preload("res://scripts/ui/hex_effect_text.gd")
+	var grey := HeroCatalogue.grey_squirrel_king(1)
+	var grey_rows := formatter.rows(grey, 3)
+	check(grey.effects[0].implicit and grey_rows.has("2" + GameIcons.bb(&"shield", 1, 30) + "2"), "Grey King hides default Walk and shows Shield strength and range")
+	var red := CardCatalogue.squirrel_king(1)
+	var heart := GameIcons.bb(&"heart", 1, 30)
+	check(formatter.effect_label(red.trigger_effects[0], red) == GameIcons.bb(&"fire", 1, 30) + ":" + heart, "Red King shows Fire into healing")
+	var explorer := CardCatalogue.red_squirrel_explorer(1)
+	var growth := formatter.effect_label(explorer.trigger_effects[0], explorer)
+	check(growth.begins_with(heart + ":+X/") and growth.contains("+Y"), "Explorer shows both captured life components")
+	var doctor := CardCatalogue.red_squirrel_doctor(1)
+	check(formatter.rows(doctor, 3).has("Up life"), "Doctor names its life effect")
+	var merchant := AdventurerCatalogue.guinea_pig_merchant(1)
+	var merchant_rows := formatter.rows(merchant, 3)
+	check(merchant_rows.has(GameIcons.bb(&"die", 1, 30) + ":Soul") and merchant_rows.has("Soul: Pierce") \
+		and merchant_rows.has("Soul: Instant"), "Merchant shows the Soul source and both spends")
+	check(formatter.rows(merchant, 2, [merchant.trigger_effects[0]])[0].begins_with("[color=#ffd84a]"), "A fired rule remains visible even when the hex runs out of rows")
+	for unit in CardCatalogue.all_units(1):
+		for effect in unit.effects + unit.trigger_effects:
+			var label := formatter.effect_label(effect, unit)
+			check(not label.is_empty() and not label.contains("Special ability") and not label.contains("Linked effects"),
+				"%s has a specific hex label for %s" % [unit.name, label])
 
 ## Shared formatting retains compact numeric rules/costs and the distinct native Mshield asset without altering effects.
 func test_hover_conventions_and_mshield() -> void:
@@ -226,7 +298,7 @@ func test_additional_hover_conventions() -> void:
 	var archer := SynergyCatalogue.grey_squirrel_archer(1)
 	check(EffectText.describe_effect(archer.trigger_effects[0], archer).begins_with("this unit wounds:"), "Own Wound trigger drops only the unrestricted victim")
 	var warrior := SynergyCatalogue.grey_squirrel_warrior(1)
-	check(EffectText.describe_effect(warrior.effects[1], warrior).contains("1/0 upgrade 2"), "Upgrade distinguishes its damage/range pair from recipient reach")
+	check(EffectText.describe_effect(warrior.effects[1], warrior).contains("1/0 " + GameIcons.bb(&"upgrade") + " 2"), "Upgrade distinguishes its damage/range pair from recipient reach")
 	var soul_text := EffectText.describe_effect(warrior.trigger_effects[0], warrior)
 	check(soul_text.contains("wounds with ") and not soul_text.contains("if the contact"), "Attack-family guards share concise Wound wording while retaining the Bow restriction")
 	var guard := SynergyCatalogue.grey_squirrel_guardian(1)

@@ -32,7 +32,7 @@ static func can_deploy_returned_hex(subject: TargetRef, target: TargetRef, hex_i
 	if unit.type == Enum.type.HERO and Match.players[unit.player].selected_hero_id not in [-1, target.id]: return false
 	return not Match.occupants(hex_id).any(func(ref: TargetRef) -> bool: return Match.owner_of(ref) == unit.player)
 
-## Effect-deployment preserves health/counters, pays no additional action/deployment, and bypasses control/printed-region limits.
+## Effect-deployment brings the printed hand card into play without extra resources, control or printed-region limits.
 ## The chosen hand card enters inactive with one Stun, emits Deploy, and starts Bash against an opposing occupant.
 static func deploy_returned_hex(subject: TargetRef, target: TargetRef, hex_id: int) -> bool:
 	if not can_deploy_returned_hex(subject, target, hex_id): return false

@@ -736,6 +736,29 @@ prints only numeric secondary parameters, excluding Move/Fly boolean flags.
 `parchment_actions._process()` compares runner source/definition with each row
 to ease the selected parchment to 1.07 scale with a small pulse and warm tint;
 previous selections ease back to normal. Animation uses a separate visual clock.
+`_sync_parchment_menu()` calls `refresh_availability()` on opening and on HUD
+refreshes, including those driven by match state and runner signals. For example,
+a spent counter or a target moving away updates the displayed button state on
+the next refresh. The animation reads those cached results, and button and
+shortcut submissions still check current legality.
+`parchment_actions._ready()` lays out the bottom rows before the first draw,
+including when a unit switch opens the replacement menu after the old one
+rolls up. Viewport resize calls the same layout routine.
+The menu stays hidden during setup and is revealed only after that layout.
+
+`Match.refresh_control()` shares one owner calculation per region between
+tile display and transition capture. For example, a Walk that gains a region
+updates its tiles before publishing the gain, so a reentrant repaint cannot
+publish it again.
+
+On a unit click, Board's selection callbacks update target rims and figure
+focus through `HexCell.refresh_selection()`. The full cell repaint still runs
+at startup and on board state updates. For example, opening a Walk preview
+highlights its destinations without rebuilding the other units' card text.
+The parchment frames are preloaded with the menu script. Walk validation and
+movement playback share `CombatResolver.walk_path()`, which indexes tiles and
+occupancy once per path search and keeps occupied destinations available as
+endpoints for the caller's Bash checks.
 
 Parchment paper keeps its original color while opening and when selected/hovered;
 selection feedback uses enlargement/pulse only. Unavailable actions retain greyscale.
@@ -761,7 +784,7 @@ and releases it on exit. Presentation never delays ignition, combat or chains.
 Damage/defeat presentation now uses damage_feedback.gd, created by
 GuerraBoard._observe_life_changes(). It snapshots the last displayed pose,
 waits for attack travel/impact (including deferred Cannon), plays Slash for
-1.5s, then on defeat fades the pose and plays Skull for 1.5s. The full sequence
+1.5s, then on defeat plays Skull for 1.5s before fading the pose. The full sequence
 owns the life_feedback slot so trigger gates wait through eventual death.
 Slash source is new PixelLab object 82a2fa61-d383-4118-85e7-bf5c6a26b6ae,
 animation 5971e603-e0c8-42d5-a439-ab338d197d81 (8 frames). Skull source is
@@ -924,7 +947,16 @@ Bomb replica lifetime correction: CombatResolver freezes a window by removing re
 
 Bomb empty-hex grouping: bomb_blast._prepare_empty_fade detects the frozen combat batch and captures empty destinations before damage. Those replicas share a 500ms hold/350ms fade; empty_fade_busy lets Board wait for that group before individual occupied-hex resolution. Occupied replicas stay lit until their record resolves. Board creates bomb_explosion.gd only for resolved outcomes with victim entries (including immune or lethally removed units); empty records still resolve normally for rules/chains without individual explosion waits.
 
-Damage life display: Board.life_number is the shared presentation-only number formatter for ordinary HexCell rows, Bash stats, hover health and lethal ghost rows. _observe_life_changes passes previous actual/max life into damage_feedback.setup. Values stay held until 250ms into Slash, then changed numbers pulse 22% for 450ms; rules still use UnitInfo's immediately resolved values. HexCell._refresh_life_numbers and controller hover-label updates refresh only retained life text per frame, preserving surrounding animations. Lethal sequences keep a ghost life row until Skull fades it out. Bomb resolution rim pulses now require positive damage in at least one target outcome; empty, immune and zero-damage bomb hexes do not flash yellow.
+Damage life display: Board.life_number is the shared presentation-only number formatter for ordinary HexCell rows, Bash stats, hover health and lethal ghost rows. _observe_life_changes passes previous actual/max life into damage_feedback.setup. Outside Bash, values stay held until 250ms into Slash, then changed numbers pulse 22% for 450ms; rules still use UnitInfo's immediately resolved values. HexCell._refresh_life_numbers and controller hover-label updates refresh only retained life text per frame, preserving surrounding animations. Ordinary lethal sequences retain the figure and use HexCell._bash_stats_text for the ghost life row. As in Bash, both fade together after Skull finishes. HexCell._life_row sets the same light red and light blue owner colors and fixed modifier size for live hex stats, Bash and death ghosts. Bomb resolution rim pulses now require positive damage in at least one target outcome; empty, immune and zero-damage bomb hexes do not flash yellow.
+
+Bash damage uses its retained side figures and stat rows instead of the
+ordinary lethal ghosts. `DamageFeedback.life_reveal_delay` holds the old
+numbers until Slash finishes. After the life pulse, a lethal participant
+plays Skull, then fades with its stat row. `HexCell.refresh` consults
+`GuerraBoard.has_bash_damage_feedback` to hold the split until both sides'
+feedback finishes. The cell's frame loop then starts the existing recenter
+tween. The board's presentation gate includes that tween, so any next
+phase or trigger cue waits for it.
 
 Death life-row alignment: damage_feedback._capture_figure copies the exact ordinary CoordinateLabel or matching BashStats participant label's width and board-relative transform. Its retained life row is explicitly centered and uses the shared 60px invisible row strut, preventing left-aligned life text from appearing outside the dying sprite. Slash timing/pulses and Skull fade remain unchanged.
 
@@ -1041,3 +1073,61 @@ The manifest/alignment include all 63 appearances. No generation was requested.
 The catalogue exporter now enumerates `CardCatalogue.all_units()` across both
 definition files; `unit-catalogue.html` includes all 80 implemented definitions.
 `army_menu.gd`: centered landing navigation eases upward on entry. Build shows catalogue, selected army, and hover rules in three columns. Toggle/load/size call `_refresh_selection`; either list calls `_inspect_unit`. Click a selected army row to remove it.
+
+Roster startup and inspection placement: `_build_side_drawer_button` now initializes
+both players open with full fade progress and calls `set_open(true)` for their
+arrow signs. Existing toggles still animate independently. `_layout_hover_panel`
+reserves the right roster width plus a margin, placing default hover info to its
+left; compact layouts place it above the bottom trays. Ctrl-drag placement remains
+user controlled. Example: launch Local game and both armies are visible immediately;
+hover a unit to inspect it beside the right roster rather than over its cards.
+
+Compact hex inspection: HexCell.refresh and _refresh_life_numbers use _life_row
+for current life plus signed physical, followed by /signed magical only when
+magical is positive (example: 5 +2/+1). _bash_stats_text shares that formatter.
+Maximum life and hearts remain available in the detailed inspection panel.
+Effects retain three summary rows, with the original 31px text, 36px action icons and the original 60px
+row struts. _add_bash_details places those rows directly under the single stat
+line. Player 2 stat text is pale cyan-blue (#8cdaff) over the dark outline to
+increase terrain contrast. This changes presentation only, not modifier rules.
+
+Hover typography: `_make_hover_unit_card` titles and `_refresh_hover_panel`
+detached counter text share `HOVER_TITLE_FONT_SIZE` (17px). Bomb, pending attack,
+Stun and named resource counter rows therefore use the same size as unit names.
+
+continuous_cues.gd collects active continuous rules and shows a static generated white/light-brown pixel circle (assets/ui/continuous-circle.png) beside the phase sign. There are no continuous markers on units. LocalMatchController polls the circle hover and lists current rules by source in the existing hover window. Eligibility comes from rules reads; no presentation state enters Match or network commands.
+
+serial_feedback.gd owns a cosmetic FIFO for positive-parameter Upgrade and resolved
+Shield/Mshield/Stun recipient clips. Board's finite presentation query excludes the
+FIFO itself; its phase query includes it. This avoids a queue waiting for itself.
+The upgrade icon and nine animation frames are the user's existing 32px PixelLab
+upgrade object (1d3948d0-a80f-43dd-9fb2-4a6daf23c526); GameIcons/EffectText share the
+static arrow, and board_trigger.gd plays the finite nine-frame clip. See SELECTION.md
+for caller map, observation boundaries, examples and the focused regression scene.
+
+Bomb sweep update: bomb_blast.gd retains only the lit origin through the pending
+response window. Its frozen-batch hook creates effective-neighbour copies, waits
+for radial travel, then retires each with its resolution. CombatResolver captures
+lighting-owner counterclockwise ring order (P1 southwest, P2 southeast), center last.
+The Board reads remaining_spread instead of measuring travel from ignition time.
+
+Lit Defuse restoration: CombatResolver.pending_lit_bomb exposes only public pending
+origin records to previews/commit. CannonAttack.bomb_owner/bomb_pierce retain inert
+metadata separately from lighting values and are persisted by MatchSnapshot.
+BombBlast uses resolved/defused outcomes to release the hidden origin exactly once
+and fade the lit overlay over the restored unlit marker without any radial copies.
+
+Continuous circle refinement: ContinuousCues uses a 22px icon at sign-local
+(44, 113), inside the left of the phase board; its hover lists source names in
+their player's phase-sign color. The original generated asset is unchanged.
+
+Frontier cards use `scripts/catalogue/frontier_catalogue.gd` and
+`scripts/catalogue/frontier_recruits.gd` for reusable definitions and selectors.
+[FRONTIER_UNITS.md](FRONTIER_UNITS.md) maps those
+definitions to trigger capture, payments, movement, deployment, snapshots,
+and their dedicated regression scene.
+
+Hero defeat and Disable record the result through `Match.record_hero_loss`.
+`RulesRunner.drain` closes pending gameplay at the next mutation boundary.
+`LocalMatchController._show_result_when_ready` waits for finite board feedback
+and fades in the winner, with local replay and online room-exit controls.

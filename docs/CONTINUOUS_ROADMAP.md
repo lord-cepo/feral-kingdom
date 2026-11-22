@@ -81,7 +81,14 @@ collection and UI provenance are still future work.
 - P/F/T/A stickers are typed per-action phrase definitions. Bow damage/range
   counters are stored as unit properties; temporary named action-value grants
   attach to concrete recipients and expire after the active player's End choices.
-  Idle snapshots preserve those timed grants and their expiration identities.
+  Idle snapshots preserve field grants and their expiration identities. Entering
+  hand clears the recipient's acquired state.
+
+- `UnitInfo` filters by passive key or action family before asking
+  `ContinuousEffect.applies_to()` to evaluate field eligibility. `RulesRunner`
+  reads event-only outputs at the matching capture boundary. The board's live
+  values indicator evaluates modifier, passive, action-value and player-action
+  grants from deployed sources.
 
 ## Current object model and remaining card-data work
 

@@ -37,6 +37,21 @@ static func have(recipient_query: Selector, outputs: Array[Contribution],
 static func while_self(condition: Condition, outputs: Array[Contribution], description: String = "") -> ContinuousEffect:
 	return have(Selectors.Self.new(), outputs, condition, null, description)
 
+## Lets live-value readers and event capture reject irrelevant outputs before evaluating recipient or source conditions.
+## The optional key selects an action family or a named passive.
+func has_output(kind: Contribution.Kind, key: StringName = &"") -> bool:
+	for output in contributions:
+		if output == null or output.kind != kind: continue
+		if key.is_empty() or output.action_family == key or output.property == key: return true
+	return false
+
+## The board's live indicator shows ongoing values, including regional strength; event-only rules are evaluated at capture.
+func shows_live_values() -> bool:
+	for output in contributions:
+		if output != null and output.kind in [Contribution.Kind.MODIFIER, Contribution.Kind.PASSIVE,
+				Contribution.Kind.ACTION_VALUE, Contribution.Kind.PLAYER_ACTIONS, Contribution.Kind.CONTROL]: return true
+	return false
+
 ## Returns this source's contribution for one stable unit ID, or zero when ineligible.
 ## UnitInfo can request one axis; unrelated outputs are filtered before predicates, so magical/Bow rewards cannot recurse into physical-threshold queries.
 func evaluate(source_id: int, recipient_id: int, axis: int = -1) -> Vector2i:
@@ -52,7 +67,7 @@ func evaluate(source_id: int, recipient_id: int, axis: int = -1) -> Vector2i:
 	return result
 
 ## Returns whether this live source contributes to the requested recipient under current bindings.
-## UnitInfo, action-value reads, and RulesRunner use this without mutating Match.
+## Callers filter relevant outputs first; simple unit queries test the one deployed recipient directly.
 func applies_to(source_id: int, recipient_id: int) -> bool:
 	var source_unit := Match.get_unit(source_id)
 	var recipient_unit := Match.get_unit(recipient_id)
@@ -63,9 +78,12 @@ func applies_to(source_id: int, recipient_id: int) -> bool:
 	ctx.recipient = TargetRef.unit(source_id)
 	if source_condition != null and not source_condition.test(ctx): return false
 	if not ctx.error.is_empty(): return false
-	var resolved := TargetResolver.resolve(recipients, TargetRef.Kind.UNIT, ctx)
-	if not resolved.error.is_empty() or not TargetResolver.contains(resolved.candidates, TargetRef.unit(recipient_id)):
-		return false
-	ctx.recipient = TargetRef.unit(recipient_id)
+	var recipient := TargetRef.unit(recipient_id)
+	if recipients is QuerySelector and recipients.output_kind(ctx) == TargetRef.Kind.UNIT:
+		if not recipients.validate(ctx).is_empty() or not recipients.matches(recipient, ctx): return false
+	else:
+		var resolved := TargetResolver.resolve(recipients, TargetRef.Kind.UNIT, ctx)
+		if not resolved.error.is_empty() or not TargetResolver.contains(resolved.candidates, recipient): return false
+	ctx.recipient = recipient
 	if recipient_condition != null and not recipient_condition.test(ctx): return false
 	return ctx.error.is_empty()

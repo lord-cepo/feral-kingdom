@@ -29,11 +29,11 @@ static func can_choose_counter(subject: TargetRef, target: TargetRef, amount: in
 static func choose_counter(subject: TargetRef, target: TargetRef, amount: int) -> bool:
 	return can_choose_counter(subject, target, amount)
 
-## Catalogue resource grants accept a real UNIT and an unambiguous counter key, including captured defeated recipients.
+## Catalogue resource grants accept a field or captured defeated recipient with an unambiguous counter key.
 static func can_add_counter(subject: TargetRef, target: TargetRef, key: StringName, amount: int) -> bool:
 	if subject == null or subject.kind != TargetRef.Kind.UNIT or target == null or target.kind != TargetRef.Kind.UNIT or key.is_empty() or amount <= 0: return false
 	var unit := Match.get_unit(target.id)
-	if unit == null: return false
+	if unit == null or unit.t_state == Enum.t_state.UNDEPLOYED: return false
 	var matches := 0
 	for prop in unit.props:
 		if prop.name != key: continue

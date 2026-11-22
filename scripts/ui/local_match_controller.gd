@@ -4,10 +4,19 @@ extends Node
 
 const SnapshotStore = preload("res://scripts/runtime/match_snapshot.gd")
 const RuleText = preload("res://scripts/ui/effect_text.gd")
+const MatchChoices = preload("res://scripts/runtime/headless_match.gd")
+const Heuristic = preload("res://scripts/runtime/tactical_heuristic.gd")
+const AI_PLAYER := 2
+const AI_DELAY := 0.3
 
 ## Test format uses one action per turn so every completed deployment/action advances play.
 @export_range(1, 8) var action_allowance := 1
 @export_range(1, 10) var deployment_allowance := 3
+@export var against_ai := false
+var _ai_choices: MatchChoices
+var _ai_policy: Heuristic
+var _ai_rng := RandomNumberGenerator.new()
+var _ai_delay := AI_DELAY
 
 var board: GuerraBoard
 var overlay: CanvasLayer
@@ -24,6 +33,11 @@ var phase_sign: Control
 var save_snapshot_button: Button
 var reset_match_button: Button
 var reset_requested := false
+var result_screen: ColorRect
+var result_title: Label
+var result_detail: Label
+## Shared by unit titles and detached counter text so inspection typography stays consistent.
+const HOVER_TITLE_FONT_SIZE := 17
 var hover_panel: PanelContainer
 var side_frame_style: StyleBoxTexture
 var hover_frame_style: StyleBoxTexture
@@ -40,6 +54,7 @@ var rule_guide_label: Label
 var rule_guide_key := ""
 var rule_guide_tween: Tween
 var phase_trigger_hovered := false
+var continuous_hover_text := ""
 var phase_hover_execution: EffectExecution
 var hover_over_target := false
 var hover_cutout_material: ShaderMaterial
@@ -63,6 +78,7 @@ func start_match(match_board: GuerraBoard, ui_layer: CanvasLayer) -> void:
 		push_error("Could not prepare character sprites. Rebuild the character alignment asset.")
 		return
 	board = match_board
+	board.local_ai_player = AI_PLAYER if against_ai else 0
 	overlay = ui_layer
 	board.hex_selected.connect(_on_hex_selected)
 	board.unit_selected.connect(_select_unit)
@@ -93,6 +109,10 @@ func start_match(match_board: GuerraBoard, ui_layer: CanvasLayer) -> void:
 		NetworkSession.attach_game(board)
 		NetworkSession.notice.connect(_on_network_notice)
 		NetworkSession.lobby_changed.connect(_queue_hud_refresh)
+	elif against_ai:
+		Match.players[AI_PLAYER].name = "AI"
+		_ai_choices = MatchChoices.new()
+		_ai_policy = Heuristic.new()
 	elif SnapshotStore.exists():
 		if SnapshotStore.load_snapshot():
 			status_message = "Restored the saved snapshot."
@@ -138,6 +158,7 @@ func _input(event: InputEvent) -> void:
 ## Lets players choose an action slot before clicking a unit; slot 1 is Move/Fly by default.
 ## Godot routes number keys to the selected parchment action or pending preview; Escape closes an idle menu.
 func _unhandled_input(event: InputEvent) -> void:
+	if is_instance_valid(board) and not board.local_input_allowed(): return
 	if not event is InputEventKey or not event.pressed or event.echo: return
 	var key := (event as InputEventKey).keycode
 	if key == KEY_ESCAPE and selected_unit_id >= 0 and not Match.rules_runner.busy():
@@ -168,7 +189,7 @@ func _unhandled_input(event: InputEvent) -> void:
 ## start_match() calls this once; animated control handlers call _save_snapshot() and _reset_match().
 ## Turn/phase/action summaries stay in the player-info panels and inn sign; no top status or instruction text is shown.
 ## Adds the terrain-anchored inn sign left of the side cards; its signal bindings queue the four visible phase labels.
-## Player info stays visible; each unit roster begins collapsed behind its own bottom-corner arrow sign.
+## Player info and rosters remain behind the result screen created above the phase sign.
 func _build_hud() -> void:
 	var background_layer := CanvasLayer.new()
 	background_layer.layer = -1
@@ -192,11 +213,12 @@ func _build_hud() -> void:
 	root.add_child(status_header)
 	save_snapshot_button = Button.new()
 	save_snapshot_button.text = "Save"
+	save_snapshot_button.visible = not against_ai
 	save_snapshot_button.pressed.connect(_on_save_pressed)
 	_style_parchment_hud_button(save_snapshot_button)
 	status_header.add_child(save_snapshot_button)
 	reset_match_button = Button.new()
-	reset_match_button.text = "Leave" if NetworkSession.online else "Reset"
+	reset_match_button.text = "Leave" if NetworkSession.online or against_ai else "Reset"
 	reset_match_button.pressed.connect(_on_reset_pressed)
 	_style_parchment_hud_button(reset_match_button)
 	status_header.add_child(reset_match_button)
@@ -216,7 +238,81 @@ func _build_hud() -> void:
 	phase_sign = preload("res://scripts/ui/phase_sign.gd").new()
 	phase_sign.set("board", board)
 	root.add_child(phase_sign)
+	_build_result_screen(root)
 	_layout_hud()
+
+## HUD setup creates a hidden full-screen result layer. Its buttons reuse the local reset and online leave paths.
+func _build_result_screen(root: Control) -> void:
+	result_screen = ColorRect.new()
+	result_screen.name = "MatchResult"
+	result_screen.z_index = 30
+	result_screen.color = Color(0.07, 0.10, 0.09, 0.62)
+	root.add_child(result_screen)
+	result_screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	result_screen.hide()
+	var centre := CenterContainer.new()
+	result_screen.add_child(centre)
+	centre.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size.x = 400
+	panel.add_theme_stylebox_override("panel", _side_card_frame_style())
+	centre.add_child(panel)
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 12)
+	panel.add_child(rows)
+	result_title = Label.new()
+	result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	result_title.add_theme_font_size_override("font_size", 36)
+	rows.add_child(result_title)
+	result_detail = Label.new()
+	result_detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	result_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rows.add_child(result_detail)
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	rows.add_child(buttons)
+	var back := Button.new()
+	back.text = "Leave match" if NetworkSession.online else "Back to menu"
+	_style_parchment_hud_button(back)
+	back.pressed.connect(_leave_result)
+	buttons.add_child(back)
+	var retry := Button.new()
+	retry.text = "Reconnect" if NetworkSession.online else "Play again"
+	_style_parchment_hud_button(retry)
+	retry.pressed.connect(_retry_result)
+	buttons.add_child(retry)
+
+## The result button leaves the online room through the relay or returns to the offline landing menu without deleting a save.
+func _leave_result() -> void:
+	if NetworkSession.online:
+		if NetworkSession.authenticated: NetworkSession.lobby_command({"type": "leave"})
+		else: result_detail.text = "Reconnect before leaving the match."
+	else: get_tree().change_scene_to_file("res://scenes/army_menu.tscn")
+
+## The result screen retries the same offline format or reconnects an online player.
+func _retry_result() -> void:
+	if NetworkSession.online: NetworkSession.connect_relay(NetworkSession.nickname)
+	elif against_ai: get_tree().reload_current_scene()
+	else: _reset_match()
+
+## The frame loop waits for final feedback before showing the winner and hides stale results if an online replay restores live play.
+func _show_result_when_ready() -> void:
+	if result_screen == null: return
+	if Match.winner == 0:
+		result_screen.hide()
+		return
+	if result_screen.visible: return
+	if Match.rules_runner.busy() or board._phase_presentation_busy(): return
+	var winner: Player = Match.players[Match.winner]
+	var winner_name := winner.name if NetworkSession.online and not winner.name.is_empty() else "Player %d" % Match.winner
+	if against_ai and Match.winner == AI_PLAYER: winner_name = "AI"
+	result_title.text = "Match over"
+	if NetworkSession.online:
+		result_title.text = "Victory" if NetworkSession.local_player == Match.winner else "Defeat"
+	result_detail.text = "You win." if against_ai and Match.winner != AI_PLAYER else winner_name + " wins."
+	result_screen.modulate.a = 0.0
+	result_screen.show()
+	create_tween().tween_property(result_screen, "modulate:a", 1.0, 0.24)
 
 ## _build_hud() styles Save and Reset with the settled parchment artwork used by unit actions, retaining standard Button input/disabled behavior.
 ## Shared paper colors stay constant across hover/press states; dark 23px captions remain centered above the frame.
@@ -265,13 +361,14 @@ func _animate_hud_button(button: Button) -> Tween:
 	button.set_meta("press_tween", tween)
 	return tween
 
-## _build_hud() adds a mirrored pair of bottom-corner arrow buttons; each controls only its own player's roster.
+## _build_hud() adds bottom-corner toggles with both rosters initially open; each button controls its own player.
 func _build_side_drawer_button(root: Control, player_id: int) -> void:
 	var button := preload("res://scripts/ui/side_roster_toggle.gd").new()
 	button.setup(player_id)
 	button.pressed.connect(_toggle_side_drawer.bind(player_id))
 	root.add_child(button)
-	side_drawers[player_id] = {"button": button, "open": false, "progress": 0.0, "tween": null}
+	side_drawers[player_id] = {"button": button, "open": true, "progress": 1.0, "tween": null}
+	button.set_open(true)
 
 ## Arrow clicks reverse that player's roster fade and smoothly reflect its sign; player info remains visible.
 ## Closing clears inspection hover, while deployment posture continues to follow its hex highlights.
@@ -386,7 +483,7 @@ func _on_card_unhovered(unit_id: int) -> void:
 
 ## Rebuilds compact card/stat/rule panels without a redundant 'Hex details' or 'Card details' heading.
 ## Hover signals and _refresh_hud() call this; Bash inspection follows one unit and drops stale/moved participants.
-## Bombs and pending attacks share a detached 25px counter box using value/P, action icon and source troop name.
+## Bombs and pending attacks share a detached counter box using the unit-title font size, value/P, action icon and source troop name.
 ## Empty target tiles retain this box; resolved attacks disappear on the next HUD refresh.
 ## Positive Stun counts for the inspected troops share that box; their health rows contain only life.
 ## Named unit resource counters such as Soul are displayed in the same detached counter box, separately from modifier/Bow counters.
@@ -396,10 +493,14 @@ func _on_card_unhovered(unit_id: int) -> void:
 ## Leaving targets retains the last content through a short grace period/fade; entering a new target cancels that hide.
 ## Rebuilt controls inherit target click-through while the pointer overlaps a selectable hex beneath the panel.
 ## Counter replay links retain their click behavior without URL underlines.
+## Shield and Mshield totals appear beside other positive counters for each inspected troop.
 ## H-disabled inspection tracks identities; Ctrl shows the current target and retains existing content only when there is no new inspectable target.
 ## The phase blink takes inspection priority and describes the captured execution even when its source has died.
 func _refresh_hover_panel() -> void:
 	if hover_panel == null or not is_instance_valid(hover_panel): return
+	if not continuous_hover_text.is_empty() and (hover_info_enabled or hover_ctrl_held):
+		_show_continuous_hover()
+		return
 	if phase_trigger_hovered and (hover_info_enabled or hover_ctrl_held):
 		_show_phase_trigger_hover()
 		return
@@ -450,8 +551,12 @@ func _refresh_hover_panel() -> void:
 			attack_rows.append(_counter_hover_row(stun, false, &"stun", unit.player, unit.iun))
 		for prop in unit.props:
 			if prop.increment != Enum.p_increment.COUNTER or prop.value <= 0: continue
-			if prop.name in ["stun", "physical", "magical", "temp_physical", "temp_magical", "bow_damage", "bow_range"]: continue
-			attack_rows.append(_counter_hover_row(prop.value, false, StringName(prop.name), unit.player, unit.iun))
+			if prop.name in ["stun", "physical", "magical", "bow_damage", "bow_range"]: continue
+			var counter_icon := StringName(prop.name)
+			match counter_icon:
+				UnitInfo.SHIELD_COUNTER: counter_icon = &"shield"
+				UnitInfo.MSHIELD_COUNTER: counter_icon = &"mshield"
+			attack_rows.append(_counter_hover_row(prop.value, false, counter_icon, unit.player, unit.iun))
 	if bomb != null:
 		attack_rows.append(_counter_hover_row(bomb.damage, bomb.pierce, &"bomb", bomb.owner, bomb.source_id))
 	if not attack_rows.is_empty():
@@ -462,7 +567,7 @@ func _refresh_hover_panel() -> void:
 		hover_content.add_child(counter_box)
 		var attacks_line := RichTextLabel.new()
 		attacks_line.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		attacks_line.add_theme_font_size_override("normal_font_size", 25)
+		attacks_line.add_theme_font_size_override("normal_font_size", HOVER_TITLE_FONT_SIZE)
 		attacks_line.bbcode_enabled = true
 		attacks_line.meta_underlined = false
 		attacks_line.fit_content = true
@@ -489,10 +594,16 @@ func _refresh_hover_panel() -> void:
 ## The cutout follows the pointer whenever hover info is visible, independently of target availability or normal panel visibility fades.
 ## Existing hover life labels also follow the shared Slash beat without rebuilding the panel or restarting its fade.
 ## Only health labels carry life_unit metadata; other rule/counter labels are skipped before lookup to avoid missing-metadata errors.
-## Normalized viewport coordinates account for canvas_items window stretching; the shader measures its 80px radius and 20px ring in rendered pixels.
-func _process(_delta: float) -> void:
+## Advances one AI choice at a time and presents terminal results after finite board feedback.
+func _process(delta: float) -> void:
 	_resume_online_switch()
 	if hover_panel == null or not is_instance_valid(board): return
+	_show_result_when_ready()
+	_advance_ai(delta)
+	var continuous_text: String = board.continuous_cues.hovered_text(get_viewport().get_mouse_position()) if board.continuous_cues != null else ""
+	if continuous_text != continuous_hover_text:
+		continuous_hover_text = continuous_text
+		_refresh_hover_panel()
 	var waiting: EffectExecution = Match.rules_runner.presentation_waiting
 	var on_blink: bool = phase_sign != null and phase_sign.contains_trigger_blink(get_viewport().get_mouse_position()) and waiting != null
 	if on_blink != phase_trigger_hovered or (on_blink and waiting != phase_hover_execution):
@@ -655,7 +766,7 @@ func _make_hover_unit_card(unit: UnitInfo) -> Control:
 	var title := Label.new()
 	title.text = unit.name
 	title.add_theme_color_override("font_color", Color("#f2f2ef"))
-	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_font_size_override("font_size", HOVER_TITLE_FONT_SIZE)
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	copy.add_child(title)
@@ -698,7 +809,7 @@ func _make_hover_unit_card(unit: UnitInfo) -> Control:
 		effect_text.fit_content = true
 		effect_text.scroll_active = false
 		effect_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		effect_text.text = RuleGuide.decorate(effects)
+		effect_text.text = RuleGuide.decorate(effects, unit.player)
 		effect_text.meta_underlined = false
 		effect_text.meta_hover_started.connect(_on_rule_guide_entered)
 		effect_text.meta_hover_ended.connect(_on_rule_guide_exited)
@@ -722,8 +833,15 @@ func _make_hover_unit_card(unit: UnitInfo) -> Control:
 ## _make_hover_unit_card() renders this as BBCode; descriptions are derived from reusable rule objects.
 ## Only definitions with active board trigger cues receive yellow emphasis.
 ## Magenta authored upgrade values link to their rule's source; actual maximum-life changes use their separate retained history.
+## The unit hover lists enemy-side deployment restrictions before the card's effects.
 func _unit_effect_details(unit: UnitInfo) -> String:
 	var lines: PackedStringArray = []
+	if unit.deployment_enemy_side:
+		var regions := PackedStringArray()
+		for region in unit.deploy_regions:
+			regions.append(EffectText._enum_word(Enum.region, region).capitalize())
+		var control := "" if unit.has_flag(&"enemy_control_deploy") else " in a region you control"
+		lines.append("Deploy on a vacant %s hex on the enemy side%s." % [" or ".join(regions), control])
 	var upgrades := RegEx.new()
 	upgrades.compile("\\[color=#ef70df\\]([^\\[]+)\\[/color\\]")
 	for detail in RuleText.unit_lines(unit, board.highlighted_triggers(unit)):
@@ -759,7 +877,7 @@ func _show_phase_trigger_hover() -> void:
 	var attribution := ""
 	if unit != null:
 		attribution = "\n[color=#ffd84a]%s[/color] [color=%s](Player %d)[/color]" % [unit.name.replace("[", "[lb]"), "#ef7770" if unit.player == 1 else "#6da9ee", unit.player]
-	text.text = RuleGuide.decorate("[color=#ffd84a]%s[/color]%s" % [RuleText.describe_effect(execution.definition, unit), attribution])
+	text.text = RuleGuide.decorate("[color=#ffd84a]%s[/color]%s" % [RuleText.describe_effect(execution.definition, unit), attribution], unit.player if unit != null else 0)
 	frame.add_child(text)
 	_set_hover_visible(true)
 	_sync_hover_target_input(hover_panel)
@@ -783,10 +901,15 @@ func _on_rule_guide_exited(meta: Variant) -> void:
 	_update_rule_guide()
 
 ## Ctrl transitions and metadata signals fade the separate guide; modifier summaries also appear on ordinary hover and read current values.
-## Attack-icon guide keys include occurrence-specific sticker markers; RuleGuide.description adds their explanations on separate lines.
+## Glossary entries use at most two lines; live modifier and life breakdowns keep their full detail.
 func _update_rule_guide() -> void:
 	if rule_guide_panel == null: return
-	var show_guide := hover_ctrl_held and not RuleGuide.description(rule_guide_key).is_empty()
+	var description := RuleGuide.description(rule_guide_key)
+	var show_guide := hover_ctrl_held and not description.is_empty()
+	rule_guide_label.max_lines_visible = 2 if show_guide else -1
+	rule_guide_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS if show_guide else TextServer.OVERRUN_NO_TRIMMING
+	rule_guide_label.custom_minimum_size.x = 380.0 if show_guide else 300.0
+	rule_guide_label.add_theme_font_size_override("font_size", 16 if show_guide else 19)
 	if rule_guide_key.begins_with("maxlife:") or rule_guide_key.begins_with("upgrade:"):
 		var parts := rule_guide_key.split(":")
 		var unit := Match.get_unit(parts[1].to_int()) if parts.size() == 2 else null
@@ -800,7 +923,7 @@ func _update_rule_guide() -> void:
 		if unit != null:
 			rule_guide_label.text = ("Magical" if parts[2] == "magical" else "Physical") + " modifiers\n" + "\n".join(unit.modifier_breakdown(parts[2] == "magical"))
 	elif show_guide:
-		rule_guide_label.text = RuleGuide.description(rule_guide_key)
+		rule_guide_label.text = description
 	if show_guide:
 		rule_guide_panel.reset_size()
 	if rule_guide_tween != null: rule_guide_tween.kill()
@@ -835,21 +958,24 @@ func _hover_frame_style() -> StyleBoxTexture:
 		hover_frame_style.set_content_margin(side, 24.0)
 	return hover_frame_style
 
-## Fits the hover host at the lower right until Ctrl-dragged; clamps display without overwriting the user's preferred position.
+## Fits inspection left of the right roster (above bottom trays on compact screens) until Ctrl-dragged; preserves custom placement.
 ## HUD refreshes, viewport resizing and deferred text layout can temporarily enlarge content; later layouts restore the preferred position.
 ## Default inspection sits half the 40px hand-pointer height higher; Ctrl-dragged placement remains under direct user control.
 func _layout_hover_panel() -> void:
 	if hover_panel == null or not is_instance_valid(hover_panel): return
 	var view_size := get_viewport().get_visible_rect().size
 	var margin := clampf(view_size.x * 0.014, 8.0, 22.0)
-	var width := minf(360.0, maxf(0.0, view_size.x - margin * 2.0))
+	var compact := view_size.x < 900.0
+	var roster_width := 0.0 if compact else clampf(view_size.x * 0.095, 96.0, 124.0) + margin
+	var width := minf(360.0, maxf(0.0, view_size.x - margin * 2.0 - roster_width))
 	hover_panel.size.x = width
 	var content_height := hover_content.get_combined_minimum_size().y + 4.0
 	var panel_height := minf(maxf(76.0, content_height), maxf(76.0, view_size.y - margin * 2.0))
 	if hover_custom_position:
 		hover_panel.position = Vector2(clampf(hover_preferred_position.x, 0.0, maxf(0.0, view_size.x - width)), clampf(hover_preferred_position.y, 0.0, maxf(0.0, view_size.y - panel_height)))
 	else:
-		hover_panel.position = Vector2(maxf(margin, view_size.x - width - margin), maxf(margin, view_size.y - panel_height - margin - 20.0))
+		var bottom := view_size.y * 0.65 if compact else view_size.y - 20.0
+		hover_panel.position = Vector2(maxf(margin, view_size.x - width - margin - roster_width), maxf(margin, bottom - panel_height - margin))
 	hover_panel.size = Vector2(width, panel_height)
 
 ## Match state/runner/cue signals schedule one repaint for an event burst; direct input handlers may still request an immediate HUD update.
@@ -858,6 +984,30 @@ func _queue_hud_refresh() -> void:
 	if _hud_refresh_queued: return
 	_hud_refresh_queued = true
 	call_deferred("_flush_hud_refresh")
+
+## Called by the frame loop to acknowledge the AI seat and submit one legal
+## AI choice after finite board feedback. Human-owned reactions keep their picker.
+func _advance_ai(delta: float) -> void:
+	if _ai_choices == null or reset_requested: return
+	var runner := Match.rules_runner
+	if runner.presentation_waiting != null:
+		if runner.presentation_ready and AI_PLAYER not in runner.presentation_acknowledged:
+			board.acknowledge_trigger_for_player(AI_PLAYER)
+		return
+	if Match.winner != 0 or board.local_input_allowed() or board._phase_presentation_busy():
+		_ai_delay = AI_DELAY
+		return
+	_ai_delay -= delta
+	if _ai_delay > 0.0: return
+	_ai_delay = AI_DELAY
+	var decision := _ai_choices.decision()
+	if decision.is_empty() or decision.player != AI_PLAYER: return
+	var options: Array = decision.options
+	var index := 0
+	if options.size() > 1:
+		var ranked := _ai_policy.rank(decision)
+		index = _ai_rng.randi_range(0, options.size() - 1) if ranked.is_empty() else ranked[0]
+	_ai_choices.submit(AI_PLAYER, options[index])
 
 ## Paints one queued final state; an intervening direct _refresh_hud already satisfied the request and makes this callback a no-op.
 func _flush_hud_refresh() -> void:
@@ -886,10 +1036,10 @@ func _refresh_hud() -> void:
 	_layout_hud()
 	_refresh_hover_panel()
 
-## Saves the stable current match so the next Godot launch resumes this exact state.
+## Saves the stable hot-seat match for the next local hot-seat launch.
 ## _on_save_pressed calls this immediately after starting click feedback; MatchSnapshot rejects busy or non-Action phases.
 func _save_snapshot() -> void:
-	if NetworkSession.online: return
+	if NetworkSession.online or against_ai: return
 	if pending_deployment >= 0:
 		status_message = "Finish or cancel the deployment selection before saving."
 		_refresh_hud()
@@ -904,7 +1054,7 @@ func _save_snapshot() -> void:
 
 ## Deletes the saved snapshot and reloads a fresh turn-one match in the current window.
 ## _on_reset_pressed calls this after its finite click animation, so future launches also start from the new game.
-## Online Leave closes room membership instead; it never deletes the offline snapshot.
+## Leave closes the online room or returns from an AI game to the menu.
 func _reset_match() -> void:
 	if NetworkSession.online:
 		if not NetworkSession.authenticated:
@@ -913,6 +1063,9 @@ func _reset_match() -> void:
 			_on_network_notice("Reconnect first, then leave the room.")
 			return
 		NetworkSession.lobby_command({"type": "leave"})
+		return
+	if against_ai:
+		get_tree().change_scene_to_file("res://scenes/army_menu.tscn")
 		return
 	SnapshotStore.delete_snapshot()
 	get_tree().reload_current_scene()
@@ -969,6 +1122,7 @@ func _make_card(unit: UnitInfo) -> Control:
 ## No inline command buttons or statistics are added back to the side tray.
 ## Clicking an owned hand unit with no deployments remaining bumps that player's deployments line instead of opening target selection.
 func _on_side_card_pressed(unit_id: int) -> void:
+	if not board.local_input_allowed(): return
 	if NetworkSession.online and NetworkSession.local_player != Match.active_player: return
 	var unit := Match.get_unit(unit_id)
 	if unit == null or unit.player != Match.active_player or Match.winner != 0: return
@@ -1132,7 +1286,7 @@ func _begin_deployment(unit_id: int) -> void:
 ## Applies the pending deployment only when the clicked hex still satisfies current rules.
 ## Board.hex_selected calls this; Match.deploy rechecks before changing state.
 func _on_hex_selected(hex_id: int) -> void:
-	if pending_deployment < 0: return
+	if pending_deployment < 0 or not board.local_input_allowed(): return
 	var unit_id := pending_deployment
 	if Match.deploy(unit_id, hex_id):
 		pending_deployment = -1
@@ -1151,13 +1305,15 @@ func _on_selection_abandoned() -> void:
 ## Starts one object-authored action with target preview before its cost is submitted.
 ## Unit clicks call this through _select_unit(); inactive units are ignored and RulesRunner rejects competing commands.
 ## All single-phrase actions check legal subjects/targets before submission; impossible buttons and shortcuts never start a command.
-func _begin_unit_action(unit_id: int, effect_index: int) -> void:
+## Returns whether submission started, so selection can fall back to the action menu without probing legality twice.
+func _begin_unit_action(unit_id: int, effect_index: int) -> bool:
+	if not board.local_input_allowed(): return false
 	if Match.rules_runner.busy():
 		if unit_id == selected_unit_id: _switch_pending_action(effect_index)
-		return
+		return false
 	var unit := Match.get_unit(unit_id)
-	if unit == null or not unit.active or effect_index < 0 or effect_index >= unit.effects.size(): return
-	if not _action_available(unit, effect_index): return
+	if unit == null or not unit.active or effect_index < 0 or effect_index >= unit.effects.size(): return false
+	if not _action_available(unit, effect_index): return false
 	selected_unit_id = unit_id
 	board.select_unit(unit_id)
 	pending_deployment = -1
@@ -1167,9 +1323,9 @@ func _begin_unit_action(unit_id: int, effect_index: int) -> void:
 	if not target_error.is_empty():
 		status_message = target_error
 		_refresh_hud()
-		return
+		return false
 	status_message = "Choose a highlighted hex for %s to %s." % [unit.name, _effect_label(effect, unit)]
-	Match.rules_runner.submit(effect, TargetRef.unit(unit_id), true)
+	return Match.rules_runner.submit(effect, TargetRef.unit(unit_id), true)
 
 ## Action entry/switch queries Stun recipients before cancelling an unpaid preview or submitting a command.
 ## Uses selector/conversion/legality with numeric preview bindings, so unpaid X is a positive minimum rather than a definition object.
@@ -1193,7 +1349,9 @@ func _stun_target_error(effect: Effect, unit_id: int) -> String:
 ## Selects a friendly figure, opens its parchment menu and starts Walk/Fly as the default unpaid target preview.
 ## Board.unit_selected and side portrait clicks call this; inactive units are ignored before any selection or pose change.
 ## A different active unit can replace an unpaid preview; its selection waits until cancellation releases the runner.
+## The default action runs the same single legality probe as a button submission.
 func _select_unit(unit_id: int) -> void:
+	if not board.local_input_allowed(): return
 	if NetworkSession.online and NetworkSession.local_player != Match.active_player: return
 	if Match.winner != 0: return
 	var unit := Match.get_unit(unit_id)
@@ -1207,9 +1365,7 @@ func _select_unit(unit_id: int) -> void:
 	selected_unit_id = unit_id
 	board.select_unit(unit_id)
 	var default_index := _default_action_index(unit, _ordered_effect_indices(unit))
-	if default_index >= 0 and _action_available(unit, default_index):
-		_begin_unit_action(unit_id, default_index)
-	else:
+	if default_index < 0 or not _begin_unit_action(unit_id, default_index):
 		status_message = "Choose an action or press its number."
 	_refresh_hud()
 
@@ -1329,6 +1485,7 @@ func _can_switch_pending_action() -> bool:
 ## Number keys and the selected card's action buttons call this without paying either cost.
 ## Unavailable actions preserve the existing unpaid preview; the same read-only check drives disabled parchment rows.
 func _switch_pending_action(effect_index: int) -> void:
+	if not board.local_input_allowed(): return
 	if not _can_switch_pending_action() or pending_action_switch_index >= 0: return
 	var unit := Match.get_unit(selected_unit_id)
 	if unit == null or not unit.active or effect_index < 0 or effect_index >= unit.effects.size(): return
@@ -1429,17 +1586,20 @@ func _side_card_frame_style() -> StyleBoxTexture:
 	return side_frame_style
 
 ## _refresh_hud() creates one menu per selected deployed unit and reverses the old menu on deselection, defeat or turn change.
-## Existing menus survive refreshes; switching units waits for closed before opening the latest selected unit's menu.
+## Existing menus refresh their action availability in place; switching units waits for closed before opening the latest menu.
 func _sync_parchment_menu() -> void:
 	var unit := Match.get_unit(selected_unit_id)
 	var wanted := unit != null and unit.t_state == Enum.t_state.DEPLOYED and unit.active and unit.player == Match.active_player and Match.winner == 0
 	if is_instance_valid(parchment_menu):
-		if wanted and not parchment_menu.is_queued_for_deletion() and not parchment_menu.closing and parchment_menu.unit_id == selected_unit_id: return
+		if wanted and not parchment_menu.is_queued_for_deletion() and not parchment_menu.closing and parchment_menu.unit_id == selected_unit_id:
+			parchment_menu.refresh_availability(unit)
+			return
 		parchment_menu.begin_close()
 		return
 	if not wanted: return
 	parchment_menu = preload("res://scripts/ui/parchment_actions.gd").new()
 	parchment_menu.setup(self, unit)
+	parchment_menu.refresh_availability(unit)
 	parchment_menu.closed.connect(_on_parchment_closed)
 	overlay.add_child(parchment_menu)
 
@@ -1455,6 +1615,7 @@ func _on_parchment_closed() -> void:
 ## Uses EffectText's shared qualifier formatter so F/T/P and action-free stickers match hover descriptions, including legacy timing flags.
 ## Life changes share current-heart-maximum notation and neutral numbers with detailed hover clauses.
 ## Upgrade rows reuse EffectText's damage/range-upgrade-radius notation instead of confusing the two deltas with reach.
+## Grant rows share the hex summary's payment marker.
 func _parchment_action_text(effect: Effect, unit: UnitInfo) -> String:
 	if effect == null: return "Action"
 	if effect.consequence is Effect.ConsequenceSequence:
@@ -1477,7 +1638,7 @@ func _parchment_action_text(effect: Effect, unit: UnitInfo) -> String:
 	if name == &"change_counter" and phrase.target is Selectors.PropertyOf: return "%+d %s" % [params[0], String(phrase.target.key)]
 	if name == &"upgrade_bow": return "+%d %s +%d" % [params[0], GameIcons.bb(&"bow", unit.player, 24), params[1]]
 	if name == &"grant_action_values":
-		return ("[lb]A[rb] " if phrase.action_free else "") + EffectText._action_grant(params[0], params[1])
+		return EffectText.compact_action_grant(effect, unit)
 	var icon := GameIcons.bb(name, unit.player, 24)
 	if icon.is_empty(): icon = _action_icon(name)
 	if icon.is_empty(): icon = String(name).capitalize()
@@ -1529,3 +1690,28 @@ func _resume_online_switch() -> void:
 		var next_action := pending_action_switch_index
 		pending_action_switch_index = -1
 		_begin_unit_action(selected_unit_id, next_action)
+
+## The phase-sign continuous circle uses the shared animated inspection host; exit or lost eligibility restores ordinary inspection.
+func _show_continuous_hover() -> void:
+	for child in hover_content.get_children():
+		hover_content.remove_child(child)
+		child.queue_free()
+	counter_pointer_inside = false
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _hover_frame_style())
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_content.add_child(frame)
+	var text := RichTextLabel.new()
+	text.bbcode_enabled = true
+	text.fit_content = true
+	text.scroll_active = false
+	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_font_size_override("normal_font_size", 21)
+	text.add_theme_color_override("default_color", Color.WHITE)
+	text.text = RuleGuide.decorate(continuous_hover_text)
+	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(text)
+	_set_hover_visible(true)
+	_sync_hover_target_input(hover_panel)
+	_layout_hover_panel()

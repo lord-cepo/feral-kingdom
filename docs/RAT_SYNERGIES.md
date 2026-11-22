@@ -43,8 +43,9 @@ victim's hex or through the off-board chooser after a lethal wound.
 
 ## Death repetition and fleeing
 
-Wild Rat's `EXTRA_DEATH_TRIGGER` contribution is read while the death occurrence
-is captured, before removal. Each extra activation gets a new EffectExecution
+Wild Rat's `EXTRA_DEATH_TRIGGER` contribution is read only for matching death
+abilities, from deployed sources before removal. Movement, other live values,
+and Deploy do not evaluate its recipient selector. Each extra activation gets a new EffectExecution
 with independent target choices; the runner does not emit another Die event.
 Multiple matching amplifiers add extra activations. Existing trigger suppression
 still takes precedence.
@@ -66,8 +67,9 @@ even if the original Swordsman has since left play.
   baseline inside a runner boundary.
 - Wound -> `RatRules.copy_on_wound` -> `Selectors.EffectsOf` ->
   `Verbs.copy_effect` -> `Action.copy_effect` -> `UnitInfo.add_effect_copy`.
-- `Action.revive` emits `return_to_hand`; `RatRules.soul_on_return` increments
-  the Warrior's Soul through the existing property verb. Its conversion uses an
+- `Action.revive` and `Action.return_to_hand` call `UnitInfo.enter_hand` to clear
+  acquired state before publishing `return_to_hand`. `RatRules.soul_on_return`
+  increments a still-deployed Warrior's Soul through the existing property verb. Its conversion uses an
   atomic CostBundle, with a read-only resource/active condition for availability.
 - `RulesRunner.capture_event` reads live death contributions and allocates each
   activation separately; existing acknowledgement/choice handling is retained.

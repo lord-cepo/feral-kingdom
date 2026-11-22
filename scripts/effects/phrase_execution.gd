@@ -12,6 +12,8 @@ var phrase: Effect.Phrase
 var targets: Array[TargetRef] = []
 var candidates: Array[TargetRef] = []
 var selection_only := false
+## EffectExecution enables this for player commands with a fixed target.
+var auto_fixed_target := false
 var outcomes: Array[Dictionary] = []
 var status := Status.IDLE
 var _parent: WeakRef
@@ -55,22 +57,29 @@ func confirm(accepted: bool) -> void:
 	if accepted: _refresh()
 	else: cancel()
 
-## Builds legal actors through TargetResolver for refresh/commit; no action or payment runs.
-func _resolve_subjects() -> Array[TargetRef]:
-	var result := TargetResolver.resolve(phrase.subject, phrase.verb.subject_kind, self)
+## Builds legal actors for refresh or rechecks one selected actor for choose/commit.
+func _resolve_subjects(selected: TargetRef = null) -> Array[TargetRef]:
+	var result := TargetResolver.resolve(phrase.subject, phrase.verb.subject_kind, self, selected)
 	error = result.error
+	if selected != null:
+		return result.candidates if not result.candidates.is_empty() and phrase.verb.accepts_subject(selected) else []
 	return result.candidates.filter(phrase.verb.accepts_subject)
 
-## Builds legal recipients for the chosen actor; refresh/commit use this read-only query.
+## Builds legal recipients for the chosen actor; full pickers share read-only verb preparation.
 ## Event numbers and ability-specific upgrades bind into an ephemeral verb, leaving the reusable phrase untouched.
-func _resolve_targets() -> Array[TargetRef]:
+## Commit and payment preflight query one retained identity against the live selector and verb.
+func _resolve_targets(selected: TargetRef = null) -> Array[TargetRef]:
 	query_verb = phrase.verb
-	var result := TargetResolver.resolve(phrase.target, phrase.verb.target_kind, self)
+	var result := TargetResolver.resolve(phrase.target, phrase.verb.target_kind, self, selected)
 	error = result.error
+	if not error.is_empty(): return []
 	var bound := phrase.verb.bound_to(self)
-	return result.candidates.filter(func(ref: TargetRef) -> bool: return bound.can_apply(subject, ref))
+	if selected != null:
+		return result.candidates if not result.candidates.is_empty() and bound.can_apply(subject, selected) else []
+	return bound.filter_targets(subject, result.candidates)
 
-## Offers a subject/target choice or commits ALL; begin and accepted UI choices call this.
+## Begin and accepted choices call this to offer a picker, commit ALL, or
+## resolve a fixed target for a player command or opted-in payment bundle.
 func _refresh() -> void:
 	if subject == null:
 		candidates = _resolve_subjects()
@@ -88,7 +97,20 @@ func _refresh() -> void:
 		return
 	status = Status.TARGET
 	if phrase.target_mode == Effect.Phrase.TargetMode.ALL: _commit()
+	elif candidates.size() == 1 and _auto_select_target():
+		targets = [candidates[0]]
+		_commit()
 	else: changed.emit()
+
+## Returns true for an explicitly bound unit or its named property. Queries
+## that happen to find one eligible target still require a player choice.
+func _auto_select_target() -> bool:
+	var anchor: Selector = phrase.target.input if phrase.target is Selectors.PropertyOf else phrase.target
+	if auto_fixed_target:
+		return anchor is Selectors.Self or anchor is Selectors.Subject
+	return selection_only and phrase is Effect.CostPhrase and phrase.subject is Selectors.Self \
+		and anchor is Selectors.Self and effect_execution.definition.cost is Effect.CostBundle \
+		and effect_execution.definition.cost.implicit_self
 
 ## Commits a currently offered subject or target after checking it remains legal.
 ## Board cell/menu handlers call this; false means it was not committed successfully.
@@ -98,8 +120,7 @@ func choose(candidate: TargetRef) -> bool:
 	if status not in [Status.SUBJECT, Status.TARGET]: return false
 	if not TargetResolver.contains(candidates, candidate): return false
 	if status == Status.SUBJECT:
-		var current := _resolve_subjects()
-		if not error.is_empty() or not TargetResolver.contains(current, candidate):
+		if _resolve_subjects(candidate).is_empty():
 			_fail(error)
 			return false
 		subject = candidate
@@ -108,13 +129,11 @@ func choose(candidate: TargetRef) -> bool:
 	targets = [candidate]
 	return _commit()
 
-## Rechecks the chosen actor and target against current Match; batch/cost preflight calls before mutation.
+## Batch execution and cost preflight recheck the actor and selected target against current Match before mutation.
 func _still_legal(target: TargetRef) -> bool:
 	if effect_execution == null or not effect_execution.source.valid(): return false
-	var actors := _resolve_subjects()
-	if not error.is_empty() or not TargetResolver.contains(actors, subject): return false
-	var current := _resolve_targets()
-	return error.is_empty() and TargetResolver.contains(current, target)
+	if subject == null or _resolve_subjects(subject).is_empty(): return false
+	return not _resolve_targets(target).is_empty()
 
 ## Numeric picker submits one positive integer for the retained counter identity; invalid/outdated amounts do not pay anything.
 ## Board's bounded amount control calls this, then _commit regenerates both candidates and the actual live balance.
@@ -128,22 +147,22 @@ func choose_amount(value: int) -> bool:
 
 ## Freezes/revalidates identities, asks X for a variable decrement, then mutates once or records a cost preview; choose/ALL call this.
 ## Numeric choices and historical target hexes belong to this execution; cost previews retain them without paying or moving the recipient.
+## ALL rebuilds the legal batch, while CHOOSE_ONE revalidates only the retained target against the live selector and verb.
 func _commit() -> bool:
 	if status != Status.TARGET: return false
 	if effect_execution == null or not effect_execution.source.valid():
 		_fail("The effect source is no longer available.")
 		return false
-	var actors := _resolve_subjects()
-	if not error.is_empty() or not TargetResolver.contains(actors, subject):
+	if subject == null or _resolve_subjects(subject).is_empty():
 		_fail(error)
 		return false
-	var current := _resolve_targets()
-	if not error.is_empty() or current.is_empty():
-		_fail(error)
-		return false
-	if phrase.target_mode == Effect.Phrase.TargetMode.ALL: targets = current.duplicate()
-	elif targets.size() != 1 or not TargetResolver.contains(current, targets[0]):
-		_fail("The chosen target is no longer legal.")
+	if phrase.target_mode == Effect.Phrase.TargetMode.ALL:
+		targets = _resolve_targets()
+		if not error.is_empty() or targets.is_empty():
+			_fail(error)
+			return false
+	elif targets.size() != 1 or _resolve_targets(targets[0]).is_empty():
+		_fail("The chosen target is no longer legal." if error.is_empty() else error)
 		return false
 	if phrase is Effect.CostPhrase and (targets.size() != 1 or not phrase.verb.atomic_cost):
 		_fail("Costs currently require one target and an atomic cost verb.")

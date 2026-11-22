@@ -5,6 +5,15 @@ var checks := 0
 var shots: Array = []
 var records: Array[TargetRef] = []
 
+class WrongDomainResult extends Selector:
+	## Declares HEX for the fallback regression; resolve() deliberately violates that contract.
+	func output_kind(_ctx: RuleContext = null) -> int:
+		return TargetRef.Kind.HEX
+
+	## Returns a valid first target followed by a malformed result to check that a match cannot hide the error.
+	func resolve(_ctx: RuleContext) -> Array[TargetRef]:
+		return [TargetRef.hex(1), TargetRef.unit(1)]
+
 func check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
@@ -53,9 +62,14 @@ func record(_subject: TargetRef, target: TargetRef) -> bool:
 	records.append(target)
 	return true
 
+## Runs the selector regressions, including selected-identity revalidation and board integration.
 func _ready() -> void:
 	Match.fire.connect(func(s: TargetRef, t: TargetRef, amount: int) -> void: shots.append([s, t, amount]))
 	test_native_and_conversion()
+	test_selected_membership()
+	test_native_existence()
+	test_single_activity_preview()
+	test_fixed_command_targets()
 	test_context_and_identity()
 	test_properties()
 	test_all_and_reentrancy()
@@ -112,6 +126,102 @@ func test_native_and_conversion() -> void:
 	var within := begin(damage(DistanceSelector.within(1)))
 	check(within.candidates.size() == 3, "Within includes center while exact ring excludes it")
 	within.cancel()
+
+## Compares direct membership with the full picker and checks the live adaptations used by commit.
+func test_selected_membership() -> void:
+	reset_board()
+	var ctx := RuleContext.new(TargetRef.unit(0), EffectEvent.new(&"move", TargetRef.unit(0), TargetRef.hex(3)))
+	var towards := DistanceSelector.within(3)
+	towards.direction = Enum.direction.TOWARDS
+	towards.reference = Selectors.Anchor.EVENT_TARGET
+	var away := DistanceSelector.within(3)
+	away.direction = Enum.direction.AWAY
+	away.reference = Selectors.Anchor.EVENT_TARGET
+	for selector: Selector in [DistanceSelector.new(1), DistanceSelector.within(1), towards, away, Selectors.BowTargets.new(1)]:
+		var all := TargetResolver.resolve(selector, TargetRef.Kind.HEX, ctx)
+		for tile in Match.map:
+			var hex := TargetRef.hex(tile.hex_id)
+			var one := TargetResolver.resolve(selector, TargetRef.Kind.HEX, ctx, hex)
+			check(one.error.is_empty() and (not one.candidates.is_empty()) == TargetResolver.contains(all.candidates, hex),
+				"Single-hex membership agrees with the full spatial selector")
+	var selected := TargetRef.unit(2)
+	var ring := DistanceSelector.new(1)
+	check(TargetResolver.resolve(ring, TargetRef.Kind.UNIT, ctx, selected).candidates.size() == 1,
+		"Single-target adaptation keeps the selected participant on a shared Bash hex")
+	Match.army[2].t_state = Enum.t_state.UNDEPLOYED
+	check(TargetResolver.resolve(ring, TargetRef.Kind.UNIT, ctx, selected).candidates.is_empty(),
+		"Single-target adaptation rejects a reserve unit even with an old position")
+	var property := Selectors.PropertyOf.new(Selectors.Self.new(), UnitInfo.STUN_COUNTER)
+	check(TargetResolver.resolve(property, TargetRef.Kind.PROPERTY, ctx,
+		TargetRef.property(TargetRef.unit(0), UnitInfo.STUN_COUNTER)).candidates.size() == 1,
+		"Single-property membership preserves SELF and the stable counter key")
+	check(TargetResolver.resolve(property, TargetRef.Kind.PROPERTY, ctx,
+		TargetRef.property(TargetRef.unit(1), UnitInfo.STUN_COUNTER)).candidates.is_empty(),
+		"A counter with the same key on a different unit cannot replace the selected property")
+	var malformed := TargetResolver.resolve(WrongDomainResult.new(), TargetRef.Kind.HEX, ctx, TargetRef.hex(1))
+	check(not malformed.error.is_empty() and malformed.candidates.is_empty(),
+		"Fallback validates the whole native result even when it finds the requested hex")
+
+## Checks the availability scan's early exit and its fallback for selectors
+## that require domain conversion or validation of every result.
+func test_native_existence() -> void:
+	reset_board()
+	var ctx := RuleContext.new(TargetRef.unit(0))
+	var seen: Array[int] = []
+	var accept := func(ref: TargetRef) -> bool:
+		seen.append(ref.id)
+		return ref.id == 1
+	var found := TargetResolver.any_matching(DistanceSelector.within(3), TargetRef.Kind.HEX, ctx, accept)
+	check(found == Selector.Membership.INCLUDED and seen == [0, 1],
+		"Native existence stops at the first hex that passes legality")
+	check(TargetResolver.any_matching(DistanceSelector.within(3), TargetRef.Kind.UNIT, ctx, accept)
+		== Selector.Membership.UNKNOWN, "Existence retains full resolution for HEX-to-UNIT adaptation")
+	check(TargetResolver.any_matching(WrongDomainResult.new(), TargetRef.Kind.HEX, ctx, accept)
+		== Selector.Membership.UNKNOWN, "Custom selectors retain full validation")
+	check(TargetResolver.any_matching(DistanceSelector.new(-1), TargetRef.Kind.HEX, ctx, accept)
+		== Selector.Membership.EXCLUDED, "Definition validation precedes the existence scan")
+
+## Checks that the direct SELF activity preview publishes the same retained
+## selection to its consequence and leaves all live resources alone.
+func test_single_activity_preview() -> void:
+	reset_board()
+	Match.active_player = 1
+	Match.phase = Match.Phase.ACTION
+	Match.players[1].actions_remaining = 1
+	var source := TargetRef.unit(0)
+	var unit := Match.get_unit(0)
+	var stun := Match.get_property(TargetRef.property(source, UnitInfo.STUN_COUNTER))
+	var consequence := Effect.ConsequencePhrase.new(Selectors.Self.new(), recorder(TargetRef.Kind.UNIT),
+		Selectors.Completed.new(&"cost_0", &"targets", TargetRef.Kind.UNIT))
+	var effect := Effect.new(Collection.action_cost(), null, consequence)
+	check(Match.rules_runner.command_available(effect, source), "The consequence can read the retained SELF cost target")
+	check(unit.active and stun.value == 0 and Match.players[1].actions_remaining == 1 and records.is_empty(),
+		"Availability spends no resources and runs no consequence")
+	unit.active = false
+	check(not Match.rules_runner.command_available(effect, source), "An inactive unit cannot pay self-Stun")
+	unit.active = true
+	unit.props.erase(stun)
+	check(not Match.rules_runner.command_available(effect, source), "A missing Stun counter makes the payment unavailable")
+
+## Uses the same target-first submission as the board. A fixed SELF shield
+## resolves immediately, while a one-result spatial selector still asks.
+func test_fixed_command_targets() -> void:
+	reset_board()
+	Match.active_player = 1
+	Match.phase = Match.Phase.ACTION
+	Match.players[1].actions_remaining = 3
+	var source := TargetRef.unit(0)
+	var shield := Collection.shield_DR(2)
+	check(Match.rules_runner.submit(shield, source, true), "The fixed-target Shield starts")
+	check(Match.rules_runner.active == null and Match.army[0]._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 2
+		and Match.army[1]._counter_value(UnitInfo.TEMP_PHYSICAL_COUNTER) == 0
+		and Match.players[1].actions_remaining == 2, "Shield pays once and only protects SELF without a click")
+	var command := Effect.new(null, null, Effect.ConsequencePhrase.new(Selectors.Self.new(),
+		recorder(TargetRef.Kind.HEX), DistanceSelector.within(0)))
+	check(Match.rules_runner.submit(command, source, true) and Match.rules_runner.active != null
+		and Match.rules_runner.active.current.candidates.size() == 1 and records.is_empty(),
+		"A spatial query with one result still opens the target picker")
+	if Match.rules_runner.active != null: Match.rules_runner.active.cancel()
 
 func test_context_and_identity() -> void:
 	reset_board()

@@ -107,7 +107,7 @@ func test_control_archer() -> void:
 	check(ControlResolver.strength(Match.map[0], 1) == before + 2, "Stored control contributes once to regional strength")
 	Action.return_to_hand(TargetRef.unit(archer.iun), TargetRef.unit(archer.iun))
 	contact(&"wound", archer, enemy)
-	check(archer._counter_value(UnitInfo.CONTROL_COUNTER) == 2, "Off-board archer cannot capture new wounds")
+	check(archer._counter_value(UnitInfo.CONTROL_COUNTER) == 0, "Return clears control and hand archer cannot capture new wounds")
 
 ## Naturalist's [2S] costs no action; the separate Reset remains ordinary [AS] and exact adjacent-friendly selection.
 func test_naturalist() -> void:
@@ -124,7 +124,7 @@ func test_naturalist() -> void:
 	check(not choose(TargetRef.unit(unit.iun)) and choose(TargetRef.unit(enemy.iun)), "Reset excludes SELF but accepts exact adjacent friend")
 	check(enemy.actual_life == 8 and Match.players[1].actions_remaining == 19, "Reset restores printed life and spends one action")
 
-## Both ammunition cards gain only on own Deploy, preserve ammo on Return, and cannot fire without a cumulative resource payment.
+## Both ammunition cards load on own Deploy, lose ammunition on Return or Reset, and require a cumulative resource payment.
 func test_ammunition() -> void:
 	for cannon in [false, true]:
 		fixture()
@@ -136,16 +136,28 @@ func test_ammunition() -> void:
 		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 0, "Other unit's Deploy cannot load ammunition")
 		Match.action_event.emit(EffectEvent.new(&"deploy", TargetRef.unit(unit.iun), TargetRef.hex(0)))
 		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 2, "Own Deploy loads two projectiles")
-		check(Match.rules_runner.submit(unit.effects[0], TargetRef.unit(unit.iun)), "Loaded ranged command submits")
-		check(choose(TargetRef.unit(unit.iun)) and choose(TargetRef.property(TargetRef.unit(unit.iun), UnitInfo.PROJECTILE_COUNTER)) \
-			and choose(TargetRef.hex(2)), "Ammo/activity choices commit before chosen attack")
+		check(Match.rules_runner.submit(unit.effects[0], TargetRef.unit(unit.iun), true), "Loaded ranged command previews its target")
+		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 2 and unit.active,
+			"Opening the target picker spends neither ammunition nor activity")
+		Match.rules_runner.active.cancel()
+		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 2 and unit.active and Match.players[1].actions_remaining == 20,
+			"Cancelling the target leaves both costs and the action untouched")
+		check(Match.rules_runner.submit(unit.effects[0], TargetRef.unit(unit.iun), true), "The cancelled shot can be retried")
+		check(choose(TargetRef.hex(2)) and not Match.rules_runner.busy(),
+			"The target click pays the fixed costs and declares the attack without another picker")
 		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 1 and unit._counter_value(&"stun") == 1 and Match.players[1].actions_remaining == 19, "One shot spends exactly ammo, activity and action")
 		if cannon:
 			contact(&"wound", unit, enemy, &"cannon")
 			check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 1, "Enemy wound does not refund Musketeer ammo")
 			contact(&"wound", unit, friend, &"cannon")
 			check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 2, "Friendly wound refunds one Musketeer projectile")
-		Action.reset_unit(TargetRef.unit(unit.iun), TargetRef.unit(unit.iun))
+		var unit_ref := TargetRef.unit(unit.iun)
+		Action.return_to_hand(unit_ref, unit_ref)
+		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 0, "Return clears the old ammunition")
+		enemy.actual_life = 1
+		check(Match.deploy(unit.iun, 0) and unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 2,
+			"Redeploy loads exactly two fresh projectiles")
+		Action.reset_unit(unit_ref, unit_ref)
 		check(unit._counter_value(UnitInfo.PROJECTILE_COUNTER) == 0, "Reset clears ammo and does not manufacture Deploy")
 
 ## Bow-specific friendly wounds and friendly Reset recipients award only their own resource watchers.
@@ -598,7 +610,7 @@ func test_hero_sacrifice_window() -> void:
 func test_registration_and_text() -> void:
 	fixture()
 	var additions := SynergyCatalogue.all_units(1)
-	check(additions.size() == 28 and CardCatalogue.starter_army().size() == 172, "The 28 synergy cards remain in the expanded 86-card roster per owner")
+	check(additions.size() == 28 and CardCatalogue.starter_army().size() == 212, "The 28 synergy cards remain in the expanded 106-card roster per owner")
 	for unit in additions:
 		check(BoardCharacter.supports(unit) and FileAccess.file_exists(BoardCharacter.portrait_path(unit)), unit.name + " uses imported PixelLab art")
 		for line in EffectText.unit_lines(unit): check(not line.contains("Unrecognized"), unit.name + " has a supported rule description")

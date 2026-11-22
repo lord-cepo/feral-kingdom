@@ -101,8 +101,8 @@ if the user supplies a different interpretation.
   aura outputs are filtered before modifier predicates, so a magical reward
   cannot recursively evaluate its own physical eligibility.
 - **Ammunition:** projectiles start at zero. Own Deploy grants two unless
-  suppressed. Reset restores zero without emitting Deploy. Return preserves
-  counters, so later redeployment can grant two more.
+  suppressed. Reset and Return restore zero without emitting Deploy. A later
+  redeployment grants two fresh projectiles.
 - **Sacrifice:** its established keyword meaning restricts the victim to a
   friendly deployed unit. No unprinted non-hero restriction is added. Halberdier's
   radius includes SELF; Warrior's exact adjacency excludes SELF. Sacrificing a

@@ -19,7 +19,11 @@ const MAPPED_CARDS := ["squirrel-king", "pine-processionary", "thunder-toad", "w
 	"jerboa-scout", "dormouse-witch", "rat-warlock", "red-squirrel-druid", "porcupine-shaman",
 	"mouse-summoner", "chinchilla-alchemist", "guinea-pig-cleric", "marmot-monk", "lemming-healer",
 	"tamia-bard", "jerboa-jester", "rat-pirate", "beaver-blacksmith", "guinea-pig-merchant",
-	"grey-squirrel-king", "jerboa-king", "marmot-queen"]
+	"grey-squirrel-king", "jerboa-king", "marmot-queen",
+	"mole-shaman", "lemming-wizard", "mole-alchemist", "flying-squirrel-thief", "rat-hunter",
+	"guinea-pig-berserker", "mara-merchant", "beaver-engineer", "marmot-crossbowman",
+	"red-squirrel-paladin", "jerboa-pirate", "beaver-bard", "chinchilla-druid", "dormouse-bard",
+	"guinea-pig-jester", "hedgehog-cleric", "hedgehog-musketeer", "lemming-monk", "mara-witch", "otter-blacksmith"]
 const CHARACTER_SHADER := preload("res://assets/shaders/board_character.gdshader")
 ## Immutable presentation assets are retained once per appearance, shared by both owners, Bash figures and travelling overlays.
 static var _art_cache: Dictionary = {}
@@ -84,6 +88,10 @@ static func _appearance_key(unit: UnitInfo) -> String:
 ## Hover/export callers receive a small AtlasTexture resource backed by the same character sheet; unsupported cards have no portrait path.
 static func portrait_path(unit: UnitInfo) -> String:
 	return SHEET_ROOT + _appearance_key(unit) + ".portrait.tres" if supports(unit) else ""
+
+## The replay viewer uses the same idle frame as a stationary board figure.
+static func replay_texture(unit: UnitInfo) -> Texture2D:
+	return _art_for(_appearance_key(unit)).get("idle") if supports(unit) else null
 
 ## Startup prepares one GPU texture per available PixelLab character; thousands of frame views are lightweight shared AtlasTextures.
 ## LocalMatchController calls once before accepting input; subsequent matches reuse the sheets and baked metadata.

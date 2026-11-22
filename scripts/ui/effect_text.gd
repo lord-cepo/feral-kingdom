@@ -63,13 +63,20 @@ static func unit_lines(unit: UnitInfo, highlighted: Array = []) -> PackedStringA
 		if aura != null: lines.append(_continuous(aura, unit))
 	for prop in unit.props:
 		if prop != null and prop.increment == Enum.p_increment.FLAG and prop.value != 0 and String(prop.name).to_lower() != "wild":
-			lines.append(_plain(prop.name) + ".")
+			lines.append(_passive_text(prop.name) + ".")
 	if unit.control_bonus != 0: lines.append("%+d control." % unit.control_bonus)
 	if not unit.next_fire_stickers.is_empty():
 		var pending := PackedStringArray()
 		for sticker in unit.next_fire_stickers: pending.append("Pierce" if sticker == &"pierce" else "Instant")
 		lines.append("Next Fire: " + " and ".join(pending) + ".")
 	return lines
+
+## Hover and Copy menus describe deployment and movement restrictions without exposing their internal flag keys.
+static func _passive_text(key: StringName) -> String:
+	match key:
+		&"enemy_control_deploy": return "May deploy in enemy-controlled regions"
+		&"must_bash": return "Must Bash when able to Walk into an enemy"
+	return _plain(key)
 
 ## UnitInfo.effect_options and property-choice menus name one copyable definition without exposing runtime keys or BBCode markup.
 ## Action, trigger, static and passive choices use the same rule descriptions as hover cards, while printed flags retain their readable name.
@@ -78,7 +85,7 @@ static func effect_option_text(option: EffectOption, unit: UnitInfo) -> String:
 	if option.definition is Effect: text = describe_effect(option.definition, unit)
 	elif option.definition is StateModifier: text = option.definition.label
 	elif option.definition is ContinuousEffect: text = _continuous(option.definition, unit)
-	elif option.definition is Prop: text = _plain(option.definition.name)
+	elif option.definition is Prop: text = _passive_text(option.definition.name)
 	var image := RegEx.new()
 	image.compile("\\[img[^\\]]*\\]([^\\[]+)\\[/img\\]")
 	for result in image.search_all(text):
@@ -91,9 +98,10 @@ static func effect_option_text(option: EffectOption, unit: UnitInfo) -> String:
 ## Compact numeric actions omit default [AS]; written consequences and conversions show their payment before the colon.
 ## Captured attack-family guards join Hit/Wound wording directly instead of repeating a separate 'if contact' clause.
 ## A counter removed from an enemy and awarded to SELF is described as a transfer, retaining its authored resource/activity payment.
-## Prior-Stun and gained-own-region guards fold into their trigger anchor instead of separate technical 'if' clauses.
+## Authored compound rules take precedence; prior-Stun and region guards fold into generated trigger text.
 static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 	if effect == null: return "Missing effect."
+	if not effect.rule_text.is_empty(): return effect.rule_text
 	var consequence := _steps(effect.consequence, unit, effect.event == null)
 	var result := consequence
 	if effect.event == null and effect.consequence is Effect.ConsequencePhrase and effect.consequence.verb.name == &"add_counter" \
@@ -101,13 +109,13 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		for payment: Effect.CostPhrase in effect.cost.phrases:
 			if payment.verb.name == &"decrement" and payment.target is Selectors.CountersOf:
 				return "[lb]%s[rb] transfer one counter from %s to this unit" % [String(effect.cost_label) if not effect.cost_label.is_empty() else "AS", _selector(payment.target.input, unit)]
-	if effect.event != null and effect.event.observed_action == &"move" and effect.consequence is Effect.ConsequencePhrase \
+	if effect.event != null and effect.event.observed_action in [&"move", &"shifted"] and effect.consequence is Effect.ConsequencePhrase \
 			and effect.consequence.verb.name == &"grant_modifiers" and effect.event.subject is QuerySelector \
 			and effect.event.subject.relative_owner == Enum.YOU and effect.consequence.target is Selectors.Reference \
 			and effect.consequence.target.anchor == Selectors.Anchor.EVENT_SUBJECT and effect.condition == null \
 			and effect.cost == null and effect.policy != Effect.Policy.OPTIONAL:
 		var values: Array = effect.consequence.verb.user_params
-		return "moved friends have %s until End" % _modifiers(values[0], values[1])
+		return "friend is moved: it has %s until enemy End" % _modifiers(values[0], values[1]) if effect.event.observed_action == &"shifted" else "friends that move have %s until End" % _modifiers(values[0], values[1])
 	if effect.event == null and effect.consequence is Effect.ConsequenceSequence and effect.consequence.phrases.size() == 2 \
 			and effect.consequence.phrases[0].verb.name == &"disable" and effect.consequence.phrases[1].verb.name == &"grant_deployments":
 		return _payment_text(effect.cost, unit, effect.cost_label, not effect.is_action_free()) + " " \
@@ -134,7 +142,8 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		and effect.consequence.phrases.size() == 2 and effect.consequence.phrases[0].verb.name == &"choose_bashing"
 	if effect.condition != null and not effect.cost is Effect.CostBundle and not effect.condition is Condition.EventPositive \
 			and not effect.condition is HeroCatalogue.NearbySacrifice and not effect.condition is SynergyRules.AlreadyStunned \
-			and not effect.condition is AdventurerRules.OwnRegion and not family_contact and not two_bash_choices and not _nonwounding_hit(effect):
+			and not effect.condition is AdventurerRules.OwnRegion and not family_contact and not two_bash_choices \
+			and not _nonwounding_hit(effect) and not _required_target_guard(effect.condition, effect.consequence):
 		result = "if %s: %s" % [_condition(effect.condition, "this unit", unit), result]
 	var is_compact := effect.consequence is Effect.Phrase and not compact_action(effect.consequence, unit).is_empty()
 	if effect.cost != null and (effect.event != null or not _default_activity_cost(effect.cost) or effect.is_action_free() or not is_compact):
@@ -142,7 +151,32 @@ static func describe_effect(effect: Effect, unit: UnitInfo = null) -> String:
 		result = payment + ": " + result if effect.event == null else result + "; " + payment
 	elif effect.event == null and effect.cost == null and not effect.is_action_free():
 		result = "[lb]A[rb]: " + result
+	if _uses_paid_sacrifice_life(effect): result += ", X is the target's current life"
+	if not effect.once_per_turn_key.is_empty(): result += " (once per turn)"
 	return result
+
+## Suppresses only guards that check the same mandatory target selectors already named by the consequence.
+static func _required_target_guard(guard: Condition, consequence: RefCounted) -> bool:
+	if guard is Condition.All:
+		return not guard.conditions.is_empty() and guard.conditions.all(
+			func(part: Condition) -> bool: return _required_target_guard(part, consequence))
+	if not guard is Condition.Matches or guard.mode != Condition.Matches.Mode.ANY: return false
+	var phrases: Array = consequence.phrases if consequence is Effect.ConsequenceSequence else [consequence]
+	for phrase in phrases:
+		if phrase is Effect.ConsequencePhrase and not phrase.optional and phrase.target == guard.selector: return true
+	return false
+
+## Names the source of X when a counter consequence reads the paid amount of a Sacrifice in its bundle.
+static func _uses_paid_sacrifice_life(effect: Effect) -> bool:
+	if not effect.cost is Effect.CostBundle or not effect.consequence is Effect.ConsequencePhrase: return false
+	var verb: Effect.Verb = effect.consequence.verb
+	if verb == null or verb.name != &"add_counter" or verb.user_params.size() < 2: return false
+	var amount: Variant = verb.user_params[1]
+	if not amount is RuleNumber or amount.basis != RuleNumber.SourceKind.PAID_AMOUNT: return false
+	for index in effect.cost.phrases.size():
+		if amount.result_name == StringName("cost_%d" % index):
+			return effect.cost.phrases[index].verb.name == &"sacrifice"
+	return false
 
 ## Red Mage/Pyromancer use an explicit captured wounded=false guard; presentation joins it to Hit without exposing history field names.
 static func _nonwounding_hit(effect: Effect) -> bool:
@@ -150,7 +184,7 @@ static func _nonwounding_hit(effect: Effect) -> bool:
 		and effect.condition is Condition.EventFact and effect.condition.key == &"wounded" and effect.condition.expected == false
 
 ## Formats independent A (action) and S (self-Stun) payments; legacy C/AC labels migrate to A/AS without changing runtime costs.
-## Counter payments name their host; Sacrifice's built-in friendly restriction is implicit in concise radius wording.
+## Counter payments name their host; Shield/Mshield spends display the signed deduction.
 static func _payment_text(cost: RefCounted, unit: UnitInfo, label: StringName = &"", consume_action: bool = true) -> String:
 	var phrases: Array = cost.phrases if cost is Effect.CostBundle else [cost]
 	if phrases.size() == 3 and phrases[0].verb.name == &"choose_counter_unit" \
@@ -169,7 +203,12 @@ static func _payment_text(cost: RefCounted, unit: UnitInfo, label: StringName = 
 		if phrase.verb.name == &"pay_life": rows.append(life_change(-int(phrase.verb.user_params[0]), -int(phrase.verb.user_params[1]), unit.player if unit != null else 1))
 		elif phrase.verb.name == &"decrement" and phrase.target is Selectors.PropertyOf:
 			var amount: Variant = phrase.verb.user_params[0]
-			rows.append("%s %s" % [amount.symbol if amount is RuleNumber else str(amount), String(phrase.target.key).to_lower()])
+			var row := "%s %s" % [amount.symbol if amount is RuleNumber else str(amount), String(phrase.target.key).to_lower()]
+			if phrase.target.key in [UnitInfo.SHIELD_COUNTER, UnitInfo.MSHIELD_COUNTER]:
+				row = "-%s %s" % [amount.symbol if amount is RuleNumber else str(amount), _property(phrase.target.key)]
+			elif amount is RuleNumber: row = "−" + row
+			if not _is_self(phrase.target.input): row += " on " + _selector(phrase.target.input, unit)
+			rows.append(row)
 		elif phrase.verb.name == &"decrement" and phrase.target is Selectors.CountersOf:
 			var host: Selector = phrase.target.input
 			rows.append("-1 counter" + ("" if _is_self(host) else " on " + _selector(host, unit)))
@@ -191,7 +230,7 @@ static func _default_activity_cost(cost: RefCounted) -> bool:
 ## Returns the hex-info amount/sticker/icon/range form for simple SELF actions, or empty for complex target rules.
 ## Normal hover actions use this; triggers keep explicit participants and compound selectors keep their restrictions.
 ## Icon images come from GameIcons; exact-ability Fire range grants and family bonuses match execution.
-## Friendly Shield/Mshield, hostile Push/Pull and other-than-SELF Mend use shared amount-icon-range shorthand.
+## Push/Pull use compact distance and range; their shared straight-line rule is implicit.
 ## Explicit enemy-only Fire projections keep their owner restriction without spelling out the HEX projection.
 static func compact_action(phrase: Effect.Phrase, unit: UnitInfo = null) -> String:
 	if phrase == null or phrase.verb == null or not _is_self(phrase.subject) \
@@ -246,11 +285,12 @@ static func _compact_radius(query: Selector, action: StringName) -> int:
 ## Walks atomic payment bundles and ordered consequences without evaluating or storing activation state.
 ## describe_effect() requests compact actions; adjacent mandatory SELF physical/magic changes share one displayed pair.
 ## Only their presentation is grouped: execution order, events, separate choices, and payment bundles are unchanged.
-## Two automatic Shield/Mshield grants to the same identity share one target clause joined by 'and'.
-## Choose-recipient/choose-ability Upgrade sequences print damage/range upgrade radius while preserving their independent choice steps.
+## Two automatic Shield/Mshield grants share one target clause; non-command counter grants show a plus sign.
+## Choose-recipient/choose-ability Upgrade sequences print damage/range, the PixelLab upgrade arrow and radius while preserving choice steps.
 ## Courier's counter choice and Shaman's two Bash choices describe their complete operation once, while executions retain separate identities.
+## A standalone counter consequence can omit its recipient when both actor and counter host are SELF.
 static func _steps(definition: RefCounted, unit: UnitInfo, compact: bool = false) -> String:
-	if definition is Effect.Phrase: return _phrase(definition, unit, compact)
+	if definition is Effect.Phrase: return _phrase(definition, unit, compact, definition is Effect.ConsequencePhrase)
 	if definition is Effect.ConsequenceSequence and definition.phrases.size() == 2:
 		var first: Effect.ConsequencePhrase = definition.phrases[0]
 		var second: Effect.ConsequencePhrase = definition.phrases[1]
@@ -263,13 +303,15 @@ static func _steps(definition: RefCounted, unit: UnitInfo, compact: bool = false
 		if first.verb.name == &"shield" and second.verb.name == &"mshield" and _is_self(first.target) and _is_self(second.target) \
 				and first.target_mode == Effect.Phrase.TargetMode.ALL and second.target_mode == Effect.Phrase.TargetMode.ALL \
 				and not first.optional and not second.optional:
-			return "%d %s and %d %s to this unit" % [first.verb.user_params[0], _action(&"shield", unit), second.verb.user_params[0], _action(&"mshield", unit)]
+			var sign_prefix := "" if compact else "+"
+			return "%s%d %s and %s%d %s to this unit" % [sign_prefix, first.verb.user_params[0], _action(&"shield", unit),
+				sign_prefix, second.verb.user_params[0], _action(&"mshield", unit)]
 	if definition is Effect.ConsequenceSequence and definition.phrases.size() == 2 \
 			and definition.phrases[0].verb.name == &"choose_upgrade_unit" and definition.phrases[1].verb.name == &"upgrade_ability":
 		var values: Array = definition.phrases[1].verb.user_params
 		var recipient: String = _query(definition.phrases[0].target, unit, true) if definition.phrases[0].target is QuerySelector else _selector(definition.phrases[0].target, unit)
 		var radius := selector_range(definition.phrases[0].target)
-		return "%d/%d upgrade %d" % [int(values[0]), int(values[1]), radius] if radius >= 0 else "%d/%d upgrade to %s" % [int(values[0]), int(values[1]), recipient]
+		return "%d/%d %s %d" % [int(values[0]), int(values[1]), GameIcons.bb(&"upgrade"), radius] if radius >= 0 else "%d/%d %s to %s" % [int(values[0]), int(values[1]), GameIcons.bb(&"upgrade"), recipient]
 	var rows := PackedStringArray()
 	if definition is Effect.ConsequenceSequence or definition is Effect.CostBundle:
 		var index := 0
@@ -308,8 +350,9 @@ static func _paired_modifiers(first: Effect.ConsequencePhrase, second: Effect.Co
 ## Deployment resource grants use the compact signed wording requested for player-resource consequences.
 ## Reset, Copy and one-shot next-turn action grants retain their distinct card keywords rather than hiding their semantics in generic counter text.
 ## Trigger references print it/target, SELF prints itself, and Flee delegates movement details to its glossary; historical Bomb targets remain explicit.
-## Formats authored verbs, including execution-bound counter kinds and Shaman's distinct participant choices, without resolving them.
-static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false) -> String:
+## Formats authored verbs without resolving them. Shield/Mshield use unsigned action amounts or signed counter deltas.
+## _steps enables implicit SELF wording only for a standalone counter consequence, so payments and other recipients remain explicit.
+static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false, implicit_counter_self: bool = false) -> String:
 	if phrase == null or phrase.verb == null: return "Incomplete phrase"
 	if compact:
 		var short_text := compact_action(phrase, unit)
@@ -332,10 +375,16 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 	var markers := _qualifiers(phrase)
 	match name:
 		&"add_counter":
-			if params[0] is RuleBinding: action = "+1 of the paid counter kind to itself"
-			elif params[0] == UnitInfo.STUN_COUNTER: action = "+%d %s to %s" % [int(params[1]), _action(&"stun", unit), target]
-			elif params[0] == UnitInfo.TEMP_MAGICAL_COUNTER: action = "%d %s to %s" % [int(params[1]), _action(&"mshield", unit), target]
-			else: action = "%+d %s to %s" % [int(params[1]), _plain(params[0]), target]
+			var recipient := "" if implicit_counter_self and target == "itself" else " to " + target
+			if params[0] is RuleBinding: action = "+1 of the paid counter kind" + recipient
+			elif params[0] == UnitInfo.STUN_COUNTER: action = "+%d %s" % [int(params[1]), _action(&"stun", unit)] + recipient
+			elif params[0] == UnitInfo.TEMP_MAGICAL_COUNTER: action = "%d %s" % [int(params[1]), _action(&"mshield", unit)] + recipient
+			else:
+				var amount := _signed_parameter(params[1])
+				var counter := _plain(params[0])
+				if params[0] == UnitInfo.EMBER_COUNTER and (params[1] is RuleNumber or absi(int(params[1])) != 1):
+					counter += "s"
+				action = "%s %s" % [amount, counter] + recipient
 		&"choose_bashing": action = "choose a bashing unit"
 		&"return_two_bashing": action = "choose a different bashing unit; return both chosen units"
 		&"spend_deployment": action = "−1 deploy"
@@ -350,7 +399,7 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 		&"sacrifice": action = "sacrifice " + target
 		&"disable": action = "disable " + target.replace("undeployed ", "").replace("non-hero ", "")
 		&"choose_upgrade_unit", &"choose_counter_unit": action = "choose " + target
-		&"upgrade_ability": action = "%d/%d upgrade to one ability of the chosen unit" % [int(params[0]), int(params[1])]
+		&"upgrade_ability": action = "%d/%d %s to one ability of the chosen unit" % [int(params[0]), int(params[1]), GameIcons.bb(&"upgrade")]
 		&"flee": action = "Flee"
 		&"reset": action = "Reset " + target
 		&"return_to_hand": action = "return " + target
@@ -377,29 +426,34 @@ static func _phrase(phrase: Effect.Phrase, unit: UnitInfo, compact: bool = false
 				var property := phrase.target as Selectors.PropertyOf
 				var host := "itself" if _is_self(property.input) and _is_self(phrase.subject) else _selector(property.input, unit)
 				if not _singular(property.input): host = ("all " if phrase.target_mode == Effect.Phrase.TargetMode.ALL else "any of ") + host
-				action = "%+d %s to %s" % [delta, _property(property.key), host]
+				var recipient := "" if implicit_counter_self and host == "itself" else " to " + host
+				action = "%+d %s" % [delta, _property(property.key)] + recipient
 				if property.key == &"Soul" and host == "itself": action = "%+d soul" % delta
-				if property.key in [UnitInfo.PHYSICAL_COUNTER, UnitInfo.TEMP_PHYSICAL_COUNTER]:
-					action = "%+d to %s" % [delta, host]
-				elif property.key in [UnitInfo.MAGICAL_COUNTER, UnitInfo.TEMP_MAGICAL_COUNTER]:
-					action = "[color=#c084fc]%+d[/color] to %s" % [delta, host]
+				if property.key == UnitInfo.PHYSICAL_COUNTER:
+					action = "%+d" % delta + recipient
+				elif property.key == UnitInfo.MAGICAL_COUNTER:
+					action = "[color=#c084fc]%+d[/color]" % delta + recipient
 				elif property.key in [UnitInfo.BOW_DAMAGE_COUNTER, UnitInfo.BOW_RANGE_COUNTER]:
 					var upgrade: Array[int] = [0, 0]
 					upgrade[0 if property.key == UnitInfo.BOW_DAMAGE_COUNTER else 1] = delta
-					action = _action_grant(&"bow", upgrade) + " to " + host
-				if property.key in [UnitInfo.TEMP_PHYSICAL_COUNTER, UnitInfo.TEMP_MAGICAL_COUNTER]: action = "temporary " + action
+					action = _action_grant(&"bow", upgrade) + recipient
 		&"set_flag": action = "set %s %s" % [target, "on" if not params.is_empty() and bool(params[0]) else "off"]
 		&"upgrade_bow": action = "%s to %s" % [_action_grant(&"bow", params), target]
 		&"upgrade_cannon": action = "%s to %s" % [_action_grant(&"cannon", params), target]
 		&"grant_action_values":
 			if params.size() >= 2:
 				action = "%s to %s until End" % [_action_grant(params[0], params[1]), target]
-		&"grant_modifiers": action = "%s to %s until End" % [_modifiers(params[0], params[1]), target]
+		&"grant_modifiers": action = "%s to %s until %sEnd" % [_modifiers(params[0], params[1]), target, "enemy " if params.size() > 2 and params[2] else ""]
 		&"up_life":
 			if params.size() >= 2: action = "%s to %s" % [life_change(int(params[0]), int(params[1]), unit.player if unit != null else 1), target]
+		&"move":
+			if params[0] is RuleNumber: action = "Walk " + params[0].symbol
+			elif phrase.target is FrontierCatalogue.RetreatHexes: action = "Walk 1 away from it"
+			else: action = markers + action + " to " + target
 		_:
 			if name in [&"fire", &"bow", &"cannon", &"bomb_throw", &"gore", &"mend", &"stun", &"shield", &"mshield", &"damage"] and not values.is_empty():
 				action = "%s%s%s" % [action_value(values[0], _numeric(params[0])), markers, action]
+				if not compact and name in [&"shield", &"mshield"]: action = "+" + action
 			elif name in [&"push", &"pull", &"push_bomb", &"pull_bomb"] and not values.is_empty():
 				action = "%d%s%s" % [values[0], markers, action]
 			else: action = markers + action
@@ -499,9 +553,14 @@ static func _selector(query: Selector, unit: UnitInfo, family: StringName = &"")
 ## _selector(), _phrase(), and _event() preserve all filters and source-owner colors even with no current candidates.
 ## Hero support queries explicitly retain both the other-than-SELF restriction and the troop-only filter.
 static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false) -> String:
+	if query is FrontierCatalogue.OtherFriends or query is SynergyCatalogue.OtherFriends:
+		return "another friend" if singular else "other friends"
+	if query is FrontierCatalogue.ProjectileUnits:
+		if query.relative_owner == Enum.YOU: return "friend with Projectiles" if singular else "friends with Projectiles"
+		return "unit with Projectiles" if singular else "units with Projectiles"
+	if query is FrontierCatalogue.BashFriends: return "friend in a Bash" if singular else "friends in Bash"
 	if query is HeroCatalogue.OtherFriends:
 		return "friendly troop" if query.type == Enum.type.TROOP else "friend"
-	if query is SynergyCatalogue.OtherFriends: return "another friendly deployed unit"
 	var noun := "unit" if singular else "units"
 	if query.kind == TargetRef.Kind.HEX: noun = "hex" if singular else "hexes"
 	elif query.kind == TargetRef.Kind.PLAYER: noun = "player" if singular else "players"
@@ -510,7 +569,7 @@ static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false)
 		if not singular: noun = "heroes" if query.type == Enum.type.HERO else noun + "s"
 	if not query.name_contains.is_empty(): noun = query.name_contains.capitalize() + " " + noun
 	if not query.required_flag.is_empty(): noun = String(query.required_flag) + " " + noun
-	if query.state >= 0 and not (query.state == Enum.t_state.DEPLOYED and query.relative_owner == Enum.YOU):
+	if query.state >= 0 and not (query.state == Enum.t_state.DEPLOYED and query.relative_owner in [Enum.YOU, Enum.OPP]):
 		noun = "%s %s" % [_enum_word(Enum.t_state, query.state), noun]
 	if query.relative_owner != Enum.ANY:
 		var friendly := query.relative_owner == Enum.YOU
@@ -523,7 +582,7 @@ static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false)
 			if query.state >= 0 and query.state != Enum.t_state.DEPLOYED: noun = _enum_word(Enum.t_state, query.state) + " " + noun
 		else: noun = "%s %s" % ["friendly" if friendly else "enemy", noun]
 		var owner := (unit.player if friendly else 3 - unit.player) if unit != null else 0
-		noun = _owner_color(noun, owner) if friendly else "[color=#ef7770]%s[/color]" % noun
+		noun = _owner_color(noun, owner)
 	if singular and query.relative_owner == Enum.ANY: noun = "any " + noun
 	if query.excluded_type == Enum.type.HERO: noun = "non-hero " + noun
 	if query.owner != Enum.owner.ANY:
@@ -541,7 +600,7 @@ static func _query(query: QuerySelector, unit: UnitInfo, singular: bool = false)
 ## Trigger action anchors use the same owner-aware PixelLab icons as their consequence descriptions.
 ## Death anchors use the shared skull image, matching the Die vocabulary in other rule descriptions.
 ## SELF action occurrences with an unrestricted target omit 'to any hex'; only constrained targets remain explicit.
-## Hit/Wound observations omit unconstrained victims and describe actual contact directly, including Wild/name ownership filters.
+## Hit/Wound describe contact, attack declarations use “attacks,” and fixed life changes use signed heart notation.
 static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 	var actor := _selector(event.subject, unit)
 	var target := _selector(event.target, unit)
@@ -549,6 +608,10 @@ static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 	if event.target is QuerySelector: target = _query(event.target, unit, true)
 	var name := event.observed_action if not event.observed_action.is_empty() else (event.verb.name if event.verb != null else &"")
 	var text := ""
+	if event.observes_attack_declaration: return actor + " attacks"
+	if name == &"life_increase" and event.detail_constraints.has("actual") and event.detail_constraints.has("maximum"):
+		return "%s on %s" % [life_change(int(event.detail_constraints.actual), int(event.detail_constraints.maximum),
+			unit.player if unit != null else 1), actor]
 	if name in [&"hit", &"wound"] and event.target is QuerySelector and event.target.relative_owner == Enum.ANY \
 			and event.target.owner == Enum.owner.ANY and event.target.type == Enum.type.ANY and event.target.state < 0 \
 			and event.target.region == Enum.region.ANY and event.target.side == Enum.side.ANY and event.target.control == Enum.control.ANY \
@@ -575,7 +638,7 @@ static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 	elif name == &"ember_added": text = "one or more Embers are put on " + target
 	elif name == &"gain_region": text = actor + " gains control of this unit's region"
 	elif name == &"bash" and event.detail_constraints.get("defender_fled", false):
-		return "[color=#ef7770]enemy[/color] flees from this unit"
+		return _owner_color("enemy", 3 - unit.player if unit != null else 0) + " flees from this unit"
 	elif name == &"bash": text = "%s %s %s" % [actor, _action(name, unit), target]
 	elif name in [&"hit", &"wound"]: text = "%s %s %s" % [actor, "hits" if name == &"hit" else "wounds", target]
 	elif name == &"deploy" and _is_self(event.subject): text = "this unit deploys"
@@ -598,6 +661,7 @@ static func _event(event: Effect.EventPhrase, unit: UnitInfo) -> String:
 ## Guards and continuous descriptions include geographic adventurer predicates without evaluating current eligibility.
 ## Hero ammo and Sacrifice guards expose their recipient/departure semantics in hover and exported rule text.
 static func _condition(value: Condition, subject: String, unit: UnitInfo) -> String:
+	if value is FrontierCatalogue.EnemySide: return subject + " is on the enemy side"
 	if value is HeroCatalogue.Loaded: return subject + " has one or more projectiles"
 	if value is HeroCatalogue.NearbySacrifice: return "another friendly unit was Sacrificed within 2 of this unit (at its departure hex)"
 	if value is AdventurerRules.EnemyStarting: return subject + " is on enemy Starting"
@@ -638,9 +702,11 @@ static func _condition(value: Condition, subject: String, unit: UnitInfo) -> Str
 	return "Unrecognized condition"
 
 ## Describes aura outputs and recipients with only nontrivial source/recipient conditions; deployed scope is implicit.
-## unit_lines() still reads definition fields rather than handwritten labels and preserves each recipient's condition.
+## New regional strength and hero-threshold auras carry concise wording with their definition.
 ## Modifier auras put the eligible recipients before 'have'; recipient predicates are relative clauses rather than trailing 'if'.
 static func _continuous(aura: ContinuousEffect, unit: UnitInfo) -> String:
+	if aura.has_output(Contribution.Kind.CONTROL) or aura.source_condition is FrontierRecruits.EnemyHeroStunned:
+		return aura.label
 	var outputs := PackedStringArray()
 	for output in aura.contributions:
 		if output == null: continue
@@ -691,8 +757,18 @@ static func action_value(current: int, printed: int) -> String:
 
 ## Printed modifier rules keep physical neutral and magic purple; magenta is reserved for applied action-value changes.
 ## State rules, continuous grants, and counter descriptions share this without changing counters or reading live totals.
-static func _modifiers(physical: int, magical: int) -> String:
-	return "%+d/[color=#c084fc]%+d[/color]" % [physical, magical]
+static func _modifiers(physical: Variant, magical: Variant) -> String:
+	return "%s/[color=#c084fc]%s[/color]" % [_signed_parameter(physical), _signed_parameter(magical)]
+
+## HexCell and parchment buttons label grants with the enclosing effect's actual payments and compact stat changes.
+static func compact_action_grant(effect: Effect, unit: UnitInfo) -> String:
+	var params: Array = effect.consequence.verb.user_params
+	var payment := ""
+	if effect.cost != null:
+		payment = _payment_text(effect.cost, unit, effect.cost_label, not effect.is_action_free())
+	elif not effect.is_action_free():
+		payment = "[lb]A[rb]"
+	return (payment + " " if not payment.is_empty() else "") + _action_grant(params[0], params[1])
 
 ## Formats signed upgrades around the action icon: +N icon +M, keeping zero and negative components explicit.
 ## Printed grant amounts are neutral; actual applied M/N changes receive magenta in the live action-value display.
@@ -773,14 +849,14 @@ static func _reference(ref: TargetRef) -> String:
 		TargetRef.Kind.PROPERTY: return "%s of %s" % [_property(ref.property_key), _reference(ref.host)]
 	return "the match"
 
-## Names stable property keys concisely; unqualified modifiers are persistent counters, temporary protection stays explicit.
+## Names stable property keys; Shield/Mshield use the same names as the actions that add them.
 ## Counter actions, PropertyOf selectors, and comparisons use this instead of handwritten card labels.
 static func _property(key: StringName) -> String:
 	match key:
 		UnitInfo.PHYSICAL_COUNTER: return "physical"
 		UnitInfo.MAGICAL_COUNTER: return "[color=#c084fc]magic[/color]"
-		UnitInfo.TEMP_PHYSICAL_COUNTER: return "temporary physical protection"
-		UnitInfo.TEMP_MAGICAL_COUNTER: return "[color=#c084fc]temporary magic protection[/color]"
+		UnitInfo.SHIELD_COUNTER: return "Shield"
+		UnitInfo.MSHIELD_COUNTER: return "[color=#c084fc]Mshield[/color]"
 		UnitInfo.STUN_COUNTER: return "Stun counter"
 	return _plain(key)
 

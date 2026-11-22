@@ -10,6 +10,9 @@ signal effect_completed(success: bool, cost_paid: bool, action_free: bool)
 signal selection_abandoned
 signal trigger_cues_changed
 
+## LocalMatchController sets the automated seat for offline AI matches.
+var local_ai_player := 0
+
 const HEX_CELL_SCENE := preload("res://scenes/board/hex_cell.tscn")
 const FIRE_VISUAL := preload("res://scripts/board/board_fire.gd")
 const HEX_SIZE := Vector2(260.0, 260.0 * 2.0 / 3.0)
@@ -17,9 +20,11 @@ const HEX_SPACING := Vector2(230.0, 180.0)
 const E1 := Vector2(sqrt(3) / 2, 0.5)
 const E2 := Vector2(0, 1)
 ## Native PNG pixel corresponding to axial (0,0), centered on the current map's central clearing.
-@export var terrain_anchor := Vector2(784.0, 464.0)
+const TERRAIN_ANCHOR := Vector2(784.0, 464.0)
+const TERRAIN_SCALE := Vector2(1.73, 2.24)
+@export var terrain_anchor := TERRAIN_ANCHOR
 ## Independent world/pixel ratios fit the terrain to the existing axial board's wider hex geometry.
-@export var terrain_scale := Vector2(1.73, 2.24)
+@export var terrain_scale := TERRAIN_SCALE
 var origin := Vector2.ZERO
 var terrain_fill: Sprite2D
 var selection: PhraseExecution
@@ -36,6 +41,7 @@ var amount_controls := HBoxContainer.new()
 var amount_input := SpinBox.new()
 var amount_button := Button.new()
 var _selection_click_accepted := false
+var _board_refresh_queued := false
 ## Cosmetic move records; rules and input never wait for these overlays.
 var walking: Dictionary = {}
 var paw_texture: Texture2D
@@ -44,6 +50,8 @@ var action_replays: Array[Node2D] = []
 var presented_triggers: Dictionary = {}
 var trigger_cues: Dictionary = {}
 var phase_sign_feedback: WeakRef
+var continuous_cues: Node
+var serial_feedback: Node
 var observed_life: Dictionary = {}
 var life_feedback: Dictionary = {}
 var heart_pulses: Dictionary = {}
@@ -60,6 +68,7 @@ var external_stun_units: Dictionary = {}
 ## BoardAmbience is initialized after terrain layout and runs independently of rules/input.
 ## Popup-window input has its own handler; graphical trigger gates retain runner work until two player acknowledgements.
 ## Registers finite-animation waits and a bounded X picker; choosing an amount never pays outside PhraseExecution's revalidation boundary.
+## SerialFeedback observes positive value changes and queues recipient clips behind finite causal animations.
 func _ready() -> void:
 	if Match.map.is_empty():
 		var regions := RegionMap.new()
@@ -69,6 +78,12 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_layout_board)
 	_layout_board()
 	$Ambience.setup(self)
+	continuous_cues = preload("res://scripts/board/continuous_cues.gd").new()
+	add_child(continuous_cues)
+	continuous_cues.setup(self)
+	serial_feedback = preload("res://scripts/board/serial_feedback.gd").new()
+	add_child(serial_feedback)
+	serial_feedback.setup.call_deferred(self)
 	for control in [choice_menu, offboard_button, confirm_button, selection_label, amount_controls]:
 		$Interface.add_child(control)
 	selection_label.position = Vector2(16, 16)
@@ -87,11 +102,13 @@ func _ready() -> void:
 	confirm_button.position = Vector2(16, 48)
 	confirm_button.text = "Use effect"
 	confirm_button.pressed.connect(func() -> void:
+		if not local_input_allowed(): return
 		_selection_click_accepted = true
 		if effect_execution != null and effect_execution.status == EffectExecution.Status.CONFIRMING:
 			effect_execution.confirm(true)
 		elif selection != null: selection.confirm(true))
 	offboard_button.pressed.connect(func() -> void:
+		if not local_input_allowed(): return
 		_selection_click_accepted = true
 		_show_offboard_choices())
 	choice_menu.index_pressed.connect(_on_choice_pressed)
@@ -102,11 +119,12 @@ func _ready() -> void:
 	Match.rules_runner.trigger_acknowledgements_enabled = true
 	Match.rules_runner.presentation_busy_query = _phase_presentation_busy
 	Match.rules_runner.trigger_presentation_requested.connect(_on_trigger_presentation_requested)
-	_on_selection_changed()
+	_on_selection_changed(true)
 	restore_pending_projectiles()
 
 ## Board startup and NetworkSession snapshot/replay completion restore stationary Fire/Bow counters for current record identities.
 ## Existing markers are retained; snapshots replace records, so stale markers retire through their ordinary cosmetic lifecycle.
+## Pending bomb centers also regain their origin-only overlay so reconnects use the same resolution-time spread.
 func restore_pending_projectiles() -> void:
 	var shown := {}
 	for child in get_children():
@@ -115,6 +133,14 @@ func restore_pending_projectiles() -> void:
 		for attack in attacks:
 			if attack.resolved or shown.has(attack.get_instance_id()): continue
 			_add_fire_visual(attack.origin_hex, attack.target_hex, attack.amount, attack.owner, attack, true, attack.pierce, attack is BowAttack)
+	var bomb_centers := {}
+	for attack: CannonAttack in Match.pending_cannon_attacks:
+		if not attack.explosion or attack.resolved or bomb_centers.has(attack.bomb_hex): continue
+		bomb_centers[attack.bomb_hex] = true
+		var exists := false
+		for child in get_children():
+			if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.attacks.has(attack): exists = true
+		if not exists: _present_bomb_blast(attack.bomb_hex)
 
 ## _ready restores pending markers; declarations start travelling Fire/Bow/Cannon markers.
 ## Each icon-only marker owns its cosmetic timing and optional pending attack lifetime.
@@ -197,16 +223,20 @@ func _highlight_resolved_attack(event: EffectEvent) -> void:
 ## Bomb Light starts cosmetic radial ignition after repaint, waiting for any incoming Fire to reach the bomb marker.
 ## Resolved attack events pulse their captured destination rim, including misses and area-blast hexes; cancelled Bashes do not pulse.
 ## Resolved bomb damage starts the lit-bomb explosion before damage feedback; radial ignition copies retire at the same hex.
-## Empty blast hexes use the shared replica fade; captured outcomes retain victim identity even after lethal damage removes the unit.
+## Only effective contacts/chain bombs play explosions; captured outcomes retain victim identity even after lethal damage removes the unit.
 ## Resource/counter grants and Return play the deployed source's mapped clip; Return also snapshots its exact departing participant before repaint.
+## Movement paths animate both voluntary Walk and card-ordered relocation without publishing extra rules events.
 func _on_action_presentation(event: EffectEvent) -> void:
 	if NetworkSession.fast_replay: return
+	if event.action == &"stun" and event.data.get("self_cost", false):
+		_queue_board_refresh()
+		return
 	if event.action == &"return_to_hand" and event.stage == &"resolved" and event.data.has("last_hex"):
 		var returning := preload("res://scripts/board/board_return.gd").new()
 		add_child(returning)
 		returning.setup(self, event)
 	if event.action == &"bomb_explosion" and event.stage == &"resolved" and event.target != null \
-			and not event.data.get("outcome", {}).get("targets", []).is_empty():
+			and bool(event.data.get("effective", not event.data.get("outcome", {}).get("targets", []).is_empty())):
 		var hex_id := event.target.hex_id()
 		if Match.get_hex(hex_id) != null:
 			var explosion := preload("res://scripts/board/bomb_explosion.gd").new()
@@ -242,7 +272,8 @@ func _on_action_presentation(event: EffectEvent) -> void:
 		_add_fire_visual(int(event.data.get("origin_hex", -1)), event.target.id,
 			int(event.data.get("amount", 0)), Match.owner_of(event.subject), queued, false,
 			bool(event.data.get("pierce", false)))
-	if event.action == &"move" and event.stage == &"resolved" and event.data.get("movement_kind") == &"move" \
+	if event.action in [&"move", &"shifted", &"relocate"] and event.stage == &"resolved" \
+			and event.data.get("movement_kind") in [&"move", &"relocate"] \
 			and event.subject != null and event.subject.kind == TargetRef.Kind.UNIT:
 		var unit := Match.get_unit(event.subject.id)
 		var path: Array = event.data.get("path", [])
@@ -334,7 +365,7 @@ func _process(delta: float) -> void:
 ## _process calls this; departure fades over the first half-step, arrival over the final half-step; arrival hands its last facing to the stationary turn/sit.
 ## The walking anchor includes the 26-pixel upward UnitFigures offset so arrivals align with stationary characters.
 ## Negative elapsed time is the 0.2s lead-in; clamp path progress to keep the actor and origin text still until it finishes.
-## During the final step the attacker approaches its Bash side and the defender smoothly shifts to the opposite side.
+## During the final step HexCell receives the actor's frame offset so both Bash info columns follow their sprites.
 ## A departing Bash actor starts on its captured side; the former partner's independent hex transition handles recentering.
 ## Actual cosmetic travel emits alternating left/right paw prints; lead-in/repaint calls emit none while stationary.
 func _advance_walk(identifier: int, delta: float) -> void:
@@ -353,8 +384,10 @@ func _advance_walk(identifier: int, delta: float) -> void:
 	var departure := 1.0 - smoothstep(0.0, 1.0, clampf(progress, 0.0, 1.0))
 	record.actor.position += Vector2(record.departure_offset) * departure
 	var approach := clampf(progress - float(path.size() - 2), 0.0, 1.0)
-	record.actor.position += record.destination.bash_arrival_offset(identifier) * smoothstep(0.0, 1.0, approach)
-	record.destination.set_bash_approach(identifier, approach)
+	var side_offset: Vector2 = record.destination.bash_arrival_offset(identifier)
+	record.actor.position += side_offset * smoothstep(0.0, 1.0, approach)
+	var settled_position := axial_to_screen(finish.coordinate) + Vector2(0, -18) + side_offset
+	record.destination.set_bash_approach(identifier, approach, record.actor.position - settled_position)
 	_advance_paw_trail(record)
 	record.ghost.modulate.a = 1.0 - clampf(progress / 0.5, 0.0, 1.0)
 	var arrival := clampf((progress - float(path.size() - 1) + 0.5) / 0.5, 0.0, 1.0)
@@ -508,6 +541,10 @@ func _layout_terrain_fill(view_size: Vector2, zoom: float) -> void:
 ## Converts an axial coordinate to board world units before origin/camera layout.
 ## Tuned axial spacing closes the vertical stretch and opens the horizontal layout; _layout_board() uses it for bounds.
 func _world_position(coordinate: Vector2i) -> Vector2:
+	return world_position(coordinate)
+
+## Maps axial coordinates for both the live battlefield and static replays.
+static func world_position(coordinate: Vector2i) -> Vector2:
 	return HEX_SPACING * (coordinate.x * E1 + coordinate.y * E2)
 
 ## Reports pointer entry by stable tile identity to the local hover-inspection panel.
@@ -534,6 +571,7 @@ func _on_cell_bash_unit_hovered(coordinate: Vector2i, unit_id: int) -> void:
 ## An invalid destination on another active friendly unit can switch an unpaid preview; legal effect targets retain priority.
 ## Bash boxes pass an explicit identity through replay, idle selection and UNIT target choice; AMOUNT locks that identity until its picker completes.
 func _on_cell_pressed(coordinate: Vector2i, preferred_unit: int = -1) -> void:
+	if not local_input_allowed(): return
 	if selection != null and selection.status == PhraseExecution.Status.AMOUNT: return
 	var clicked := _hex_id_at(coordinate)
 	if clicked < 0: return
@@ -701,7 +739,7 @@ func _offer_unit_selection(hex_id: int, excluded_unit: int = -1, only_unit: int 
 ## HexCell's later physics picking can still claim a legal board target before this check.
 ## An idle selected unit also clears here, allowing parchment-only selection to dismiss on click-away.
 func _clear_focus_after_unmatched_click(expected: PhraseExecution, waiting_for_tile: bool) -> void:
-	if _selection_click_accepted: return
+	if _selection_click_accepted or not local_input_allowed(): return
 	if expected != null and selection == expected and selection.status in [PhraseExecution.Status.SUBJECT, PhraseExecution.Status.TARGET, PhraseExecution.Status.AMOUNT]:
 		selection.cancel()
 	elif waiting_for_tile and not selectable_hexes.is_empty():
@@ -745,16 +783,13 @@ func observe_execution(execution: EffectExecution) -> void:
 	if not execution.finished.is_connected(completion): execution.finished.connect(completion)
 	_on_selection_changed()
 
-## Resolved action presentation calls this for a recipient-bound, finite cosmetic clip, including Shield/Mshield and Stun.
+## Resolved Shield/Mshield and Stun presentation queues a finite recipient clip after prior action/damage feedback.
 ## Unit identity chooses the recipient's actual figure/Bash side; no effect or cost is executed by the burst.
 func _show_target_feedback(target: TargetRef, clip: String, duration: float) -> void:
 	if target == null or target.kind != TargetRef.Kind.UNIT or not target.has_hex(): return
 	var unit := Match.get_unit(target.id)
 	if unit == null: return
-	var marker := preload("res://scripts/board/board_trigger.gd").new()
-	marker.setup(self, unit, target.hex_id(), clip, duration)
-	add_child(marker)
-	marker._process(0.0)
+	serial_feedback.enqueue(unit, clip, duration)
 
 ## observe_execution() detects captured triggers at first activation, not individual consequence events or resumed phases.
 ## Weak execution identities prevent replay on cost-trigger resumes without retaining completed activations.
@@ -874,22 +909,36 @@ func _on_managed_finished(_success: bool, execution: EffectExecution) -> void:
 ## Highlights legal destinations for the local deployment chooser.
 ## LocalMatchController supplies IDs from Match.can_deploy and handles hex_selected.
 func show_hex_choices(hex_ids: Array[int]) -> void:
+	if selectable_hexes == hex_ids: return
 	selectable_hexes = hex_ids.duplicate()
 	_on_selection_changed()
 
 ## Highlights one deployed unit's figure without changing the hex ownership frame.
 ## LocalMatchController calls this when the player selects a board figure or card.
 func select_unit(unit_id: int) -> void:
+	if selected_unit_id == unit_id: return
 	selected_unit_id = unit_id
 	_on_selection_changed()
 
+## Self-Stun schedules a repaint in case payment pauses at another choice. A later action repaint satisfies it.
+## Movement and combat still repaint synchronously to register their finite presentation in event order.
+func _queue_board_refresh() -> void:
+	if _board_refresh_queued: return
+	_board_refresh_queued = true
+	_flush_board_refresh.call_deferred()
+
+## The deferred self-Stun callback paints only if no later event has already painted the board.
+func _flush_board_refresh() -> void:
+	if _board_refresh_queued: refresh_board()
+
 ## Repaints cells after authoritative Match events and recalculates region ownership.
-## Called on Match.state_changed and Match.action_event.
+## Match.state_changed and action presenters call this and satisfy any queued self-Stun repaint.
 ## Life observations update once per value change; repeated refreshes never replay damage feedback.
 func refresh_board() -> void:
+	_board_refresh_queued = false
 	_observe_life_changes()
 	Match.refresh_control()
-	_on_selection_changed()
+	_on_selection_changed(true)
 
 ## _process() discovers deployed units with positive Stun and creates one persistent sleeping marker per unit instance.
 ## Existing markers own their fade-out/recovery and frame progress, so ordinary repaints or further Stun never restart the loop.
@@ -937,6 +986,7 @@ func _sleeping_feedback_ready(unit: UnitInfo) -> bool:
 ## Damage queues impact settling -> new Slash -> optional Skull; repeated current/max/death notifications share one sequence.
 ## Snapshots are cosmetic only: authoritative damage, defeat and captured trigger membership remain runner-owned.
 ## Any deployed current/max increase starts a single shared heart pulse, independently of damage feedback and duplicate refresh notifications.
+## A change from or into hand is a zone transition, so restoring the printed maximum cannot create a Slash.
 func _observe_life_changes() -> void:
 	for key in life_feedback.keys():
 		if not is_instance_valid(life_feedback[key]): life_feedback.erase(key)
@@ -944,11 +994,13 @@ func _observe_life_changes() -> void:
 		if unit == null: continue
 		var previous: Dictionary = observed_life.get(unit.iun, {})
 		var same_unit: bool = previous.get("unit") == unit
-		var reduced: bool = same_unit and (unit.actual_life < int(previous.actual) or unit.max_life < int(previous.maximum))
+		var was_deployed: bool = same_unit and previous.get("deployed", false)
+		var reduced: bool = was_deployed and unit.t_state != Enum.t_state.UNDEPLOYED \
+			and (unit.actual_life < int(previous.actual) or unit.max_life < int(previous.maximum))
 		var increased: bool = same_unit and (unit.actual_life > int(previous.actual) or unit.max_life > int(previous.maximum))
 		if increased and unit.t_state == Enum.t_state.DEPLOYED:
 			heart_pulses[unit.get_instance_id()] = {"unit": weakref(unit), "elapsed": 0.0, "start_scale": _heart_pulse_scale(unit)}
-		var died: bool = same_unit and previous.get("deployed", false) and unit.t_state == Enum.t_state.DEFEATED
+		var died: bool = was_deployed and unit.t_state == Enum.t_state.DEFEATED
 		var previous_hex: int = int(previous.get("hex", unit.ihx)) if same_unit else unit.ihx
 		observed_life[unit.iun] = {"unit": unit, "actual": unit.actual_life, "maximum": unit.max_life,
 			"hex": unit.ihx if unit.t_state == Enum.t_state.DEPLOYED else previous_hex, "deployed": unit.t_state == Enum.t_state.DEPLOYED}
@@ -991,7 +1043,7 @@ func life_heart(unit: UnitInfo, size: int = 48) -> String:
 	return GameIcons.bb(&"heart", unit.player, roundi(size * _heart_pulse_scale(unit)))
 
 ## HexCell, damage ghosts and hover cards share this presentation-only life value; rules always read UnitInfo directly.
-## A queued damage sequence holds previous values until 250ms into Slash, then pulses only the actual/max number that changed.
+## A damage sequence supplies its own reveal beat. Bash holds previous life until Slash finishes.
 func life_number(unit: UnitInfo, maximum: bool = false, font_size: int = 31) -> String:
 	var values := Vector2i(unit.actual_life, unit.max_life)
 	var index := 1 if maximum else 0
@@ -1001,9 +1053,19 @@ func life_number(unit: UnitInfo, maximum: bool = false, font_size: int = 31) -> 
 		if not feedback.life_revealed:
 			values = feedback.previous_life
 		elif values[index] != feedback.previous_life[index]:
-			var pulse := clampf((feedback.elapsed - feedback.delay - 0.25) / 0.45, 0.0, 1.0)
+			var pulse := clampf((feedback.elapsed - feedback.delay - feedback.life_reveal_delay()) / 0.45, 0.0, 1.0)
 			size = roundi(font_size * (1.0 + 0.22 * sin(pulse * PI)))
 	return "[font_size=%d]%d[/font_size]" % [size, values[index]]
+
+## HexCell uses the exact rendered encounter to keep its side layout while either participant has finite feedback.
+func has_bash_damage_feedback(bash: BashInfo) -> bool:
+	if bash == null or NetworkSession.fast_replay: return false
+	for identifier in [bash.attacker_id, bash.defender_id]:
+		var unit := Match.get_unit(identifier)
+		if unit == null: continue
+		var feedback: Variant = life_feedback.get(unit.get_instance_id())
+		if is_instance_valid(feedback) and not feedback.is_queued_for_deletion() and feedback.bash == bash: return true
+	return false
 
 ## Damage queues wait for incoming attack/bomb travel and resolved lit-bomb explosions, then a short impact beat before showing Slash.
 func _attack_feedback_delay(hex_id: int) -> float:
@@ -1012,7 +1074,7 @@ func _attack_feedback_delay(hex_id: int) -> float:
 		if child.get_script() == FIRE_VISUAL and child.target_hex == hex_id:
 			delay = maxf(delay, FIRE_VISUAL.TRAVEL_SECONDS - child.elapsed + 0.25)
 		elif child.get_script() == preload("res://scripts/board/bomb_blast.gd"):
-			delay = maxf(delay, child.delay + child.TRAVEL - child.elapsed + 0.25)
+			delay = maxf(delay, child.remaining_spread() + 0.25)
 		elif child.get_script() == preload("res://scripts/board/bomb_explosion.gd") and child.hex_id == hex_id:
 			delay = maxf(delay, child.delay + child.DURATION - child.elapsed + 0.25)
 	return delay
@@ -1048,7 +1110,8 @@ func _attach_selection(next: PhraseExecution) -> void:
 ## Redraws target, deployment, and confirmation affordances from current UI state.
 ## PhraseExecution.changed and show_hex_choices() call this; AMOUNT shows a bounded input for the retained counter rather than another target list.
 ## Courier's neutral amount choice names its later recipient step without falsely claiming that already-paid activity remains unpaid.
-func _on_selection_changed() -> void:
+## Startup and refresh_board request a full repaint; selection-only callers retain unit art and info rows.
+func _on_selection_changed(repaint_cells: bool = false) -> void:
 	choice_menu.hide()
 	choices = []
 	unit_choice_ids.clear()
@@ -1058,13 +1121,17 @@ func _on_selection_changed() -> void:
 		for candidate in selection.candidates:
 			if candidate.has_hex(): hexes.append(candidate.hex_id())
 			else: has_offboard = true
-	var choosing := selection != null and selection.status in [PhraseExecution.Status.SUBJECT, PhraseExecution.Status.TARGET]
+	var human := local_input_allowed()
+	var choosing := human and selection != null and selection.status in [PhraseExecution.Status.SUBJECT, PhraseExecution.Status.TARGET]
 	for cell: HexCell in hex_grid.get_children():
 		var selected := cell.hex_info.hex_id in hexes if choosing else cell.hex_info.hex_id in selectable_hexes
-		cell.refresh(selected, selected_unit_id)
+		if repaint_cells:
+			cell.refresh(selected, selected_unit_id)
+		else:
+			cell.refresh_selection(selected, selected_unit_id)
 	offboard_button.visible = choosing and has_offboard
-	confirm_button.visible = (effect_execution != null and effect_execution.status == EffectExecution.Status.CONFIRMING) or (selection != null and selection.status == PhraseExecution.Status.CONFIRMING)
-	amount_controls.visible = selection != null and selection.status == PhraseExecution.Status.AMOUNT
+	confirm_button.visible = human and ((effect_execution != null and effect_execution.status == EffectExecution.Status.CONFIRMING) or (selection != null and selection.status == PhraseExecution.Status.CONFIRMING))
+	amount_controls.visible = human and selection != null and selection.status == PhraseExecution.Status.AMOUNT
 	if amount_controls.visible:
 		amount_input.max_value = selection.amount_max
 		amount_input.value = 1
@@ -1089,6 +1156,7 @@ func _on_selection_changed() -> void:
 
 ## The X button submits one integer to the same pending phrase; stale clicks and balance changes remain authoritative validation failures.
 func _on_amount_chosen() -> void:
+	if not local_input_allowed(): return
 	_selection_click_accepted = true
 	if selection != null: selection.choose_amount(int(amount_input.value))
 
@@ -1125,6 +1193,7 @@ func _show_unit_choices(unit_ids: Array[int]) -> void:
 ## PopupMenu.index_pressed commits the selected identity after its pointer input has been claimed by the menu handler.
 ## PhraseExecution revalidates the choice; menu clicks never invoke outside-board cancellation or select all occupants.
 func _on_choice_pressed(index: int) -> void:
+	if not local_input_allowed(): return
 	if selection != null and index >= 0 and index < choices.size():
 		_selection_click_accepted = true
 		var chosen := choices[index]
@@ -1149,6 +1218,7 @@ func _on_choice_window_input(event: InputEvent) -> void:
 ## Existing target/deployment choices retain priority over this marker interaction.
 ## Idle selected units still schedule the deferred click-away check; unit picking can claim the click before it runs.
 func _unhandled_input(event: InputEvent) -> void:
+	if not local_input_allowed(): return
 	if event.is_action_pressed("board_cancel") and effect_execution != null:
 		effect_execution.cancel()
 		get_viewport().set_input_as_handled()
@@ -1180,7 +1250,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _exit_tree() -> void:
 	if not NetworkSession.online: _cancel_current()
 
-## Resolved bomb_light starts one cosmetic radial blast; matching Fire markers supply their remaining travel delay.
+## Resolved bomb_light retains one lit origin; matching Fire markers delay ignition, and the frozen window later starts radial copies.
 ## The blast overlay owns only visibility/animation and captures pending area records without changing their combat schedule.
 func _present_bomb_blast(hex_id: int) -> void:
 	if Match.get_hex(hex_id) == null: return
@@ -1212,23 +1282,37 @@ func _sync_trigger_presentation() -> void:
 
 ## Keeps the blink behind its complete causal animation chain, including a lethal Slash followed by Skull.
 ## A lit-bomb explosion and a returned unit's departing snapshot are finite causal feedback even after their rules records leave the board.
+## A retained Bash layout and its recenter tween also hold the trigger gate.
 func _trigger_animation_busy() -> bool:
 	for feedback in life_feedback.values():
 		if is_instance_valid(feedback) and not feedback.is_queued_for_deletion(): return true
 	if not walking.is_empty(): return true
+	for cell: HexCell in hex_grid.get_children():
+		if cell.bash_feedback_held or (cell.bash_exit_tween != null and cell.bash_exit_tween.is_running()): return true
 	for presenter in displacement_presenters.values():
 		if is_instance_valid(presenter) and presenter.landing_hidden: return true
 	for child in get_children():
 		if child.get_script() == preload("res://scripts/board/board_return.gd") and not child.is_queued_for_deletion(): return true
 		if child.get_script() == preload("res://scripts/board/bomb_explosion.gd") and not child.is_queued_for_deletion(): return true
 		if child.get_script() == FIRE_VISUAL and child.elapsed < FIRE_VISUAL.TRAVEL_SECONDS: return true
-		if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.elapsed < child.delay + child.TRAVEL: return true
+		if child.get_script() == preload("res://scripts/board/bomb_blast.gd") and child.empty_fade_busy(): return true
 	return false
 
-## Hot-seat input submits the next missing identity; online Space/blink input submits only this client's authenticated seat.
+## Board and HUD use this to protect AI decisions while letting the human
+## answer a captured reaction even during the AI's turn.
+func local_input_allowed() -> bool:
+	if local_ai_player == 0: return true
+	var execution := Match.rules_runner.active
+	var owner := Match.owner_of(execution.source) if execution != null else Match.active_player
+	return owner != local_ai_player
+
+## Hot-seat input submits the next missing identity; online and AI matches submit only the human's seat.
 func _acknowledge_next_local_player() -> void:
 	if NetworkSession.online:
 		acknowledge_trigger_for_player(NetworkSession.local_player)
+		return
+	if local_ai_player != 0:
+		acknowledge_trigger_for_player(3 - local_ai_player)
 		return
 	for player in [1, 2]:
 		if player not in Match.rules_runner.presentation_acknowledged:
@@ -1256,9 +1340,15 @@ func acknowledge_trigger_for_player(player: int) -> void:
 ## RulesRunner queries only finite action/impact/death/arrival feedback; ambient loops, pending counters and old-action replays never block phases.
 ## The sign's own entrance also settles before the next phase so brief phase labels remain synchronized with authoritative state.
 ## Bomb replicas remain persistent while any captured blast record is unresolved, including records already frozen out of the public queue.
-## Empty replicas finish their shared fade before the frozen blast batch begins its individual occupied-hex animations.
+## Effective-neighbour copies finish spreading before the frozen blast batch begins its individual hex explosions.
 ## Reconnect fast replay bypasses only these cosmetic waits while rebuilding accepted history.
 func _phase_presentation_busy() -> bool:
+	if NetworkSession.fast_replay: return false
+	return (serial_feedback != null and serial_feedback.busy()) or _finite_presentation_busy()
+
+## SerialFeedback checks finite visuals independently of its own queue, avoiding a self-blocking phase wait.
+## Existing combat, damage, movement and sign transitions remain the authority for when the next recipient clip may start.
+func _finite_presentation_busy() -> bool:
 	if NetworkSession.fast_replay: return false
 	if not heart_pulses.is_empty(): return true
 	if _trigger_animation_busy(): return true
@@ -1266,7 +1356,6 @@ func _phase_presentation_busy() -> bool:
 		if is_instance_valid(presenter) and not presenter.is_queued_for_deletion(): return true
 	for cell: HexCell in hex_grid.get_children():
 		if cell.bomb_throw_elapsed >= 0.0: return true
-		if cell.bash_exit_tween != null and cell.bash_exit_tween.is_running(): return true
 		for figure in cell.unit_figures.get_children():
 			if figure is BoardCharacter and figure._command_animating(): return true
 	for child in get_children():

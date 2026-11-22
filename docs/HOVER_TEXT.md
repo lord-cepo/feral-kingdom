@@ -1,5 +1,16 @@
 # Shared hover wording and Mshield
 
+Holding Ctrl over an underlined rule or an icon shows a glossary entry of up to
+two lines. The heart reads current health on the left and maximum health on the
+right. First Strike, Steady, Fast, Titanium and Obsidian link to their passive
+rules. `RuleGuide.decorate()` adds the links, and the controller's
+`_update_rule_guide()` displays them when the pointer enters or Ctrl is held.
+Unit and trigger hover cards also pass the source player to `RuleGuide.decorate()`
+so “enemy” and “enemies” use the opposing player’s color.
+For cards such as Tamia Bard, the match hover lists the permitted deployment
+regions, enemy-side requirement and normal regional-control requirement above
+the effect rows.
+
 Further shared clauses: Courier's two retained choices describe one transfer of
 up to two same-kind counters between distinct units within 2 of SELF; its [S]
 payment remains. Sacrifice costs read `sacrifice within 2`, relying on Sacrifice's
@@ -33,10 +44,11 @@ regions and repeated control refreshes do not trigger. The player still chooses
 a legal Bow target; no action/activity payment is added to the trigger.
 Its concise text is `enemy gains control of this unit's region: 2F [Bow] 2`.
 
-Disable takes a unit from hand to defeated, preserving life/counters/abilities,
-and emits Disable without Die. Defeat of a deployed unit sets life to zero,
+Disable takes a printed hand card to defeated and emits Disable without Die.
+Defeat of a deployed unit sets life to zero,
 removes it from the board and emits Die. Both end in the defeated state; ordinary
-Revive may recover eligible non-heroes, but death watchers only see Defeat's Die.
+Revive may recover eligible non-heroes at printed state in hand. Death watchers
+see only Defeat's Die.
 
 Caller additions: `_steps` summarizes Courier/Shaman choice sequences;
 `describe_effect` folds Rogue's matching counter payment/award into transfer
@@ -50,11 +62,13 @@ remain explicit. Enemy-only Fire projected from units to hexes reads `1F [Fire]
 to enemy` without projection terminology. An exact-ability Upgrade prints its
 damage/range pair before the keyword and recipient radius after it: `1/0 upgrade
 2`. Its [AS]/Soul payment remains explicit. Upgrade parchment rows use the same
-formatter. Physical-threshold auras read `friends with +3 or more physical have
+formatter when the text fits. The parchment caption fits one line after its
+container sizes it, using the compact effect label for descriptions that still
+overflow at the smaller font size. Physical-threshold auras read `friends with +3 or more physical have
 ...`; inert-bomb support reads `friends over bombs have +0/+1`. The bomb wording
 still requires an inert bomb. Wild Marmot's Return is confirmed [AS], not free.
 Attack-family guards fold into the contact clause: `friend wounds with [Bow]:
-+1 Soul to itself`, retaining the Bow requirement without a separate technical
++1 Soul`, retaining the Bow requirement without a separate technical
 `if the contact was caused by Bow` sentence.
 
 Grey Squirrel Warrior earns one Soul for each friendly Bow Wound (positive life
@@ -66,16 +80,32 @@ Bow 2/4. The other printed effect is its Soul-income trigger.
 The user's 2026-11-05 spot corrections define shared presentation rules, not unit-name overrides. Card definitions remain authoritative objects; descriptions never execute them.
 
 - A SELF action trigger with an unrestricted destination reads `this unit [action icon]: ...`, omitting redundant `to any hex`. Historical stages and genuinely constrained participants remain explicit.
-- Simple actions use amount/icon/range. Each family's normal ownership filter is implicit: Shield/Mshield/Mend choose friends; Stun/Push/Pull use the authored hostile shorthand. Other target restrictions remain in structural descriptions.
+- Simple actions use amount/icon/range. Push/Pull show distance and range, with alignment understood as part of the verb. `2 Shield 3` grants two Shield counters to one chosen friend within three hexes. The hover counter box shows positive Shield and Mshield totals alongside Stun. A counter gain or spend uses a signed amount, such as `+1 Mshield` or `-1 Shield`.
+- A standalone counter consequence on SELF reads `+1 Ember`. Counter changes to another recipient still name that recipient. Compound effects keep their target clauses.
+- Mandatory-target existence checks remain part of legality and are implicit in the card text. “Friend” implies deployed unless a different zone is written. Fixed life-increase triggers use the signed heart notation. An attack-declaration trigger uses “attacks” for starting Bash or using Bow, Fire or Cannon.
 - Default [AS] is implicit for compact actions. Written consequences show `[AS]: ...`; independent [S]/[A]/[2S] and resource costs retain their actual markers. A Disable-to-deployment conversion reads `[AS] disable friend: +1 deploy`, without changing its sequential paid behavior. Disable's normal in-hand non-hero restriction remains authoritative in its verb and glossary.
 - Modifier auras read `adjacent friends with one or more projectiles have +1/+0`. Source conditions read `while this unit is wounded: +0/+1 to adjacent friends`. Friends means every friendly unit type; an explicit troop filter is a separate condition. Adjacency excludes distance zero.
-- A movement-to-modifier grant reads `moved friends have +2/+0 until End`. A nearby Sacrifice condition is folded into the event once: `friend is sacrificed within 2: ...`. Two automatic same-recipient Shield/Mshield grants share `and ... to this unit` while remaining ordered rule actions.
+- Jerboa King reads `friend is shifted: it has +2/+0 until enemy End`. Shifted is successful forced displacement, currently Push/Pull; ordinary Walk/Fly do not qualify. A nearby Sacrifice condition is folded into the event once: `friend is sacrificed within 2: ...`. Two automatic same-recipient Shield/Mshield grants share `and ... to this unit` while remaining ordered rule actions.
 
 ## Caller map and examples
+
+Parchment grant buttons call `EffectText.compact_action_grant`. It derives the
+payment from the enclosing effect. Wild Grey Squirrel's Bow grant shows `[S]`
+because it pays self-Stun.
+
+Hex labels use at most two words per effect, with symbols for amounts, ranges and
+events. Red Squirrel Explorer reads `♥:+X/+Y`; Red Squirrel King reads
+`🔥:♥`; Doctor reads `Up life`. Guinea Pig Merchant reads `☠:Soul`,
+`Soul: Pierce`, and `Soul: Instant`. Grey Squirrel King's default Walk is
+omitted and his shield reads `2🛡2`. Multi-step rules use names such as
+`Shielded walk` and `Double return`. Static and continuous rules show a short
+benefit label. A hex with more than three available rows indicates how many
+are hidden. Hover shows the complete rules.
 
 | Caller → formatter | Responsibility |
 | --- | --- |
 | Hover/Bash/tray/export → `EffectText.unit_lines/describe_effect` | Share costs, events and consequence wording. |
+| `HexCell._compact_effect_summary` → `hex_effect_text.gd` | Show the same compact rows in ordinary hexes and Bash. Read shared action values and icons, name compound rules, and highlight the specific fired trigger. |
 | `compact_action/_compact_radius` | Read numeric arity and each action family's standard spatial owner filter. |
 | `_query/_event/_condition/_continuous/_steps` | Describe selectors, events, predicates, auras and safe same-recipient display grouping. |
 | `GameIcons.action_path/bb` → `RuleGuide.decorate` | Use distinct steel Shield and purple Mshield images with separate glossary links. |
@@ -85,3 +115,11 @@ The user's 2026-11-05 spot corrections define shared presentation rules, not uni
 The importer preserves all nine original 32px animation frames. Only the UI glyph is alpha-cropped and nearest-resized to the existing 48px source height; `GameIcons.bb` sizes it to the requested text height. The finite effect remains independent of authoritative rules and persistent ambience.
 
 Examples are the Red Squirrel King's Fire trigger, Grey Squirrel King's Supply/Shield/loaded aura, Jerboa King's Move grant, Marmot Queen's Mend/Sacrifice/wounded aura, and Wild Tamia's Disable conversion. Focused coverage is in `tests/hero_units_test.tscn`; it includes ownership/type exclusions, captured modifier lifetime/snapshot persistence and distinct Mshield frame loading. Tests remain unrun unless requested with `TEST`.
+
+Upgrade wording now uses the dedicated PixelLab pink-arrow object through
+GameIcons.bb("upgrade"). The preceding damage/range pair and following radius or
+recipient text retain their meaning, including chosen-ability sequences. Applied
+parameter increases play the corresponding nine-frame arrow via SerialFeedback.
+GameIcons.action_path("upgrade") supplies a tightly cropped AtlasTexture to both
+inline descriptions and plain buttons; GameIcons.bb("upgrade") renders it at
+12x19 pixels at the default text size, removing transparent gaps between words.

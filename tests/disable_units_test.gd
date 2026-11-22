@@ -116,9 +116,9 @@ func test_mara_life_and_non_triggers() -> void:
 	Action.return_to_hand(TargetRef.unit(explorer.iun), TargetRef.unit(mara.iun))
 	var another := plain(2, -1)
 	Action.disable(TargetRef.unit(explorer.iun), TargetRef.unit(another.iun))
-	check(mara.actual_life == 3 and mara.max_life == 3, "Mara in hand does not capture new Disable triggers")
+	check(mara.actual_life == 2 and mara.max_life == 2, "Return washes Mara's growth and hand Mara cannot capture new Disable triggers")
 
-## Permanent Cannon counters affect future captured attacks, survive Return/snapshots and remain distinct from Reset and attack consumption.
+## Permanent Cannon counters affect future attacks and survive deployed snapshots, then clear on Return.
 func test_cannon_capture_and_lifetime() -> void:
 	fixture()
 	var mara := add(CardCatalogue.wild_mara(1), 0)
@@ -129,27 +129,28 @@ func test_cannon_capture_and_lifetime() -> void:
 	check(earlier.all(func(attack: CannonAttack) -> bool: return attack.amount == 2), "Already queued Cannon values do not drift after growth")
 	check(CombatResolver.declare_cannon(TargetRef.unit(mara.iun), TargetRef.hex(2), 2, 2, false, false, true) and Match.pending_cannon_attacks.back().amount == 3, "Next Cannon captures its persistent +1 damage")
 	check(mara.action_counter(UnitInfo.CANNON_DAMAGE_COUNTER) == 1, "Declaring attacks does not consume permanent Cannon counters")
-	Action.return_to_hand(TargetRef.unit(mara.iun), TargetRef.unit(mara.iun))
-	check(mara.action_counter(UnitInfo.CANNON_DAMAGE_COUNTER) == 1, "Return retains permanent Cannon counters")
 	var snapshot := preload("res://scripts/runtime/match_snapshot.gd")
 	var saved: Dictionary = snapshot._capture_state()
 	mara.props = []
 	snapshot._apply_state(saved)
 	check(mara.action_counter(UnitInfo.CANNON_DAMAGE_COUNTER) == 1, "Snapshot restores Cannon counters through ordinary properties")
-	Action.reset_unit(TargetRef.unit(mara.iun), TargetRef.unit(mara.iun))
-	check(mara.action_counter(UnitInfo.CANNON_DAMAGE_COUNTER) == 0 and mara.max_life == 2, "Reset removes acquired Cannon counters and restores printed health")
+	Action.return_to_hand(TargetRef.unit(mara.iun), TargetRef.unit(mara.iun))
+	check(mara.action_counter(UnitInfo.CANNON_DAMAGE_COUNTER) == 0 and mara.max_life == 2, "Return clears acquired Cannon counters and restores printed health")
+	check(Match.pending_cannon_attacks.back().amount == 3, "Return preserves previously captured Cannon damage")
 
 ## Grey's A action grants only one adjacent friend a timed +1 Bow damage, pays activity, preserves the player action and freezes future Bow capture.
 func test_grey_squirrel() -> void:
 	fixture()
 	var grey := add(CardCatalogue.wild_grey_squirrel(1), 0)
+	check(EffectText.compact_action_grant(grey.effects[1], grey).begins_with("[lb]S[rb] "),
+		"Grey's compact grant label displays the self-Stun payment")
 	var archer := add(CardCatalogue.reed_archer(1), 1)
 	var enemy := plain(2, 2)
 	var distant := plain(1, 4)
-	check(Match.rules_runner.submit(grey.effects[1], TargetRef.unit(grey.iun)) and choose(TargetRef.unit(grey.iun)), "Grey pays activity for its A action")
+	check(Match.rules_runner.submit(grey.effects[1], TargetRef.unit(grey.iun)) and choose(TargetRef.unit(grey.iun)), "Grey pays activity for its [S] action")
 	check(not choose(TargetRef.unit(grey.iun)) and not choose(TargetRef.unit(enemy.iun)) and not choose(TargetRef.unit(distant.iun)), "Only another exact-distance-one friend is legal")
 	check(choose(TargetRef.unit(archer.iun)), "Grey chooses its adjacent friend")
-	check(not grey.active and grey._counter_value(&"stun") == 1 and Match.players[1].actions_remaining == 10, "A still pays self-Stun but spends no action")
+	check(not grey.active and grey._counter_value(&"stun") == 1 and Match.players[1].actions_remaining == 10, "[S] pays self-Stun without spending a player action")
 	check(archer.effective_bow_bonus() == Vector2i(1, 0) and archer.bow_damage_bonus == 0 and archer.timed_grants.size() == 1, "Grey's recipient gets a timed damage-only bonus, not permanent counters")
 	check(CombatResolver.declare_bow(TargetRef.unit(archer.iun), TargetRef.hex(enemy.ihx), 1, 4, false, false, true) and Match.pending_bow_attacks.back().amount == 2, "Bow captures Grey's applied damage bonus")
 	Match.expire_timed_grants(1, Match.turn_number)
@@ -175,7 +176,7 @@ func test_grey_eligibility_and_expiry() -> void:
 ## The three Disable cards keep exact stats/names/portraits as the twenty newer adventurers append for both owners.
 func test_registration() -> void:
 	var roster := CardCatalogue.starter_army()
-	check(roster.size() == 172, "Both players have all 86 PixelLab units")
+	check(roster.size() == 212, "Both players have all 106 PixelLab units")
 	var cards: Array[UnitInfo] = [CardCatalogue.wild_mara(1), CardCatalogue.wild_tamia(1), CardCatalogue.wild_grey_squirrel(1)]
 	var lives := [2, 2, 1]
 	var regions := [[Enum.region.INTERMEDIATE], [Enum.region.STARTING], [Enum.region.STARTING, Enum.region.INTERMEDIATE]]

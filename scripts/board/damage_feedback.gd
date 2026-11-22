@@ -3,6 +3,8 @@ extends Node2D
 
 const DAMAGE_DURATION := 1.5
 const DEATH_DURATION := 1.5
+const BASH_LIFE_BEAT := 0.45
+const BASH_DEPARTURE_DURATION := 0.28
 var board: GuerraBoard
 var unit: UnitInfo
 var hex_id := -1
@@ -15,7 +17,10 @@ var ghost: Sprite2D
 var previous_life := Vector2i.ZERO
 var life_revealed := false
 var ghost_life: RichTextLabel
-var ghost_life_show_max := true
+## The cell keeps this exact Bash layout alive until this feedback leaves the board.
+var bash: BashInfo
+var bash_participant_nodes: Array[CanvasItem] = []
+var bash_departure_alphas: Array[float] = []
 
 ## Board life observation captures the last displayed figure before refresh removes a defeated unit; impact delay lets attack art finish first.
 ## Previous life is a presentation snapshot only, exposed through Board.life_number until the Slash reaches its damage beat.
@@ -36,17 +41,21 @@ func mark_death() -> void:
 	if ghost != null: ghost.show()
 	if ghost_life != null: ghost_life.show()
 
-## setup() snapshots only the visible pose/material, keeping death presentation independent from the removed logical unit.
+## setup() retains a Bash participant's live presentation nodes. Outside Bash it snapshots the visible pose and life row.
 ## A separate life row survives lethal removal so its old value can still change and pulse during Slash before Skull fades it out.
 ## Copies the exact ordinary/Bash life label's bounds and alignment, keeping the retained row centered over its participant instead of left-aligned.
+## The retained label uses the same base font size as the live hex labels.
 func _capture_figure() -> void:
 	var cell := board.hex_grid.get_child(hex_id) as HexCell
+	var encounter := cell.rendered_bash
+	if encounter != null and unit.iun in [encounter.attacker_id, encounter.defender_id]:
+		bash = encounter
+		for figure: CanvasItem in cell.unit_figures.get_children():
+			if int(figure.get_meta("unit_id", -1)) == unit.iun: bash_participant_nodes.append(figure)
+		for overlay: CanvasItem in cell.bash_overlays:
+			if int(overlay.get_meta("unit_id", -1)) == unit.iun: bash_participant_nodes.append(overlay)
+		return
 	var source_info := cell.get_node("CoordinateLabel") as RichTextLabel
-	for child in cell.get_children():
-		if child is RichTextLabel and child.name.begins_with("BashStats_") and int(child.get_meta("unit_id", -1)) == unit.iun:
-			source_info = child
-			ghost_life_show_max = false
-			break
 	ghost_life = RichTextLabel.new()
 	ghost_life.bbcode_enabled = true
 	ghost_life.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -60,7 +69,7 @@ func _capture_figure() -> void:
 	ghost_life.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	ghost_life.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	ghost_life.add_theme_font_override("normal_font", HexCell.INFO_FONT)
-	ghost_life.add_theme_color_override("default_color", Color("#ef7770") if unit.player == 1 else Color("#6da9ee"))
+	ghost_life.add_theme_font_size_override("normal_font_size", HexCell.INFO_FONT_SIZE)
 	ghost_life.add_theme_color_override("font_outline_color", Color("#111827"))
 	ghost_life.add_theme_constant_override("outline_size", 4)
 	ghost_life.z_index = 7
@@ -81,27 +90,29 @@ func _capture_figure() -> void:
 		add_child(ghost)
 		break
 
-## Godot first waits for impact, then completes the new Slash; lethal damage adds a fading Skull and eases the retained figure away.
-## Keeping this node alive lets trigger presentation wait for the whole causal sequence, including death, before its blink accepts input.
-## Rechecks deferred Cannon/bomb travel before starting damage, then anchors the damage/death timeline to that actual start.
-## Life display publishes 250ms into Slash and pulses for 450ms, including a retained life row for lethal damage.
-## The retained life row uses the same invisible 60px strut as hex info, preserving its vertical baseline while numbers pulse.
+## Board.life_number uses this beat for both the reveal and its number pulse.
+func life_reveal_delay() -> float:
+	return DAMAGE_DURATION if bash != null else 0.25
+
+## Godot waits for impact before Slash, then plays Skull on defeat before fading the figure and its stats.
+## The retained non-Bash row uses HexCell's Bash stat formatter so the death cue keeps the same life and modifier layout.
+## Keeping the node alive makes HexCell and the presentation gate wait through the complete damage/death sequence.
 func _process(delta: float) -> void:
 	if Match.get_unit(unit.iun) != unit:
 		queue_free()
 		return
 	elapsed += delta
-	if damage_started and elapsed - delay >= 0.25: life_revealed = true
+	if damage_started and elapsed - delay >= life_reveal_delay(): life_revealed = true
 	if ghost_life != null:
-		ghost_life.text = "%s%s %s" % [HexCell.INFO_ROW_SPACER, board.life_number(unit), GameIcons.bb(&"heart", unit.player, 48)]
-		if ghost_life_show_max: ghost_life.text += " " + board.life_number(unit, true)
+		var cell := board.hex_grid.get_child(hex_id) as HexCell
+		ghost_life.text = cell._bash_stats_text(unit)
 	if elapsed < delay: return
 	if not damage_started:
 		if board._attack_feedback_delay(hex_id) > 0.251: return
 		delay = elapsed
 		damage_started = true
 		_play_clip("slash", DAMAGE_DURATION)
-	var death_time := elapsed - delay - DAMAGE_DURATION
+	var death_time := elapsed - delay - DAMAGE_DURATION - (BASH_LIFE_BEAT if bash != null else 0.0)
 	if death_time < 0.0: return
 	if not died:
 		queue_free()
@@ -109,9 +120,26 @@ func _process(delta: float) -> void:
 	if not death_started:
 		death_started = true
 		_play_clip("skull", DEATH_DURATION)
-	if ghost != null: ghost.modulate.a = 1.0 - smoothstep(0.0, 0.35, death_time)
-	if ghost_life != null: ghost_life.modulate.a = 1.0 - smoothstep(0.0, 0.35, death_time)
-	if death_time >= DEATH_DURATION: queue_free()
+	var fade_time := death_time - DEATH_DURATION
+	if fade_time < 0.0: return
+	if bash != null:
+		_fade_bash_participant(fade_time)
+		return
+	var opacity := 1.0 - smoothstep(0.0, BASH_DEPARTURE_DURATION, fade_time)
+	if ghost != null: ghost.self_modulate.a = opacity
+	if ghost_life != null: ghost_life.self_modulate.a = opacity
+	if fade_time >= BASH_DEPARTURE_DURATION: queue_free()
+
+## The Bash pose and its rows fade together only after Skull completes. HexCell recenters after the last feedback node exits.
+func _fade_bash_participant(time: float) -> void:
+	if bash_departure_alphas.is_empty():
+		for node in bash_participant_nodes:
+			bash_departure_alphas.append(node.self_modulate.a if is_instance_valid(node) else 0.0)
+	var opacity := 1.0 - smoothstep(0.0, BASH_DEPARTURE_DURATION, time)
+	for index in bash_participant_nodes.size():
+		var node := bash_participant_nodes[index]
+		if is_instance_valid(node): node.self_modulate.a = bash_departure_alphas[index] * opacity
+	if time >= BASH_DEPARTURE_DURATION: queue_free()
 
 ## The sequence starts each finite feedback clip exactly once; board_trigger owns its fade-in, playback and fade-out.
 func _play_clip(clip: String, duration: float) -> void:

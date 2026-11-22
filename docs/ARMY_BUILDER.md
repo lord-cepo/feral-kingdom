@@ -3,8 +3,22 @@
 The application starts at `scenes/army_menu.tscn`. Host and Join currently show
 availability messages; Build opens the army editor with a short fade.
 
+**Against AI** opens a fresh offline match with the full catalogue and eight
+deployments per side. You control Player 1 and the heuristic controls Player 2.
+Use **Leave** to return to the menu. Local game is the hot-seat option and uses
+its existing saved match.
+
+The menu's `_navigate` opens `ai_game.tscn`, which enables AI on the shared
+LocalMatchController. Its frame loop waits for finite board feedback before
+submitting the AI's next legal choice through HeadlessMatch's decision API.
+GuerraBoard routes human input by the current choice's owner, including
+reactions on the other player's turn. Each side acknowledges trigger cues
+under its own identity.
+
 Choose 8, 12 or 16 distinct catalogue units, enter an army name and save.
 Saving an existing name replaces that deck. Saved armies can be loaded for editing.
+Selecting a saved name immediately fills the centre **Selected army** column
+and restores the saved size. The Load deck button reloads the same selection.
 Local decks live in Godot's `user://armies.json`, using catalogue UUIDs without
 player suffixes. They do not yet configure hosted or joined matches.
 
@@ -13,7 +27,9 @@ navigation calls `_navigate`, which loads the catalogue and calls `_build_editor
 only on the first Build entry (the landing menu does not load unit textures).
 Size and unit controls call `_resize_army` and
 `_toggle_unit`, which update `_refresh_selection`. Save calls `_save_deck` and
-`_refresh_saved`; Load calls `_load_deck` and refreshes selection. No gameplay
+`_refresh_saved`. The saved picker's `item_selected` signal and Load button call
+`_load_deck`. It recognizes earlier numeric sizes and owner-suffixed UUIDs,
+then `_refresh_selection` fills the centre list without rewriting the deck. No gameplay
 state or effect definitions are changed. Duplicate copies are not offered because
 this editor selects a subset; additional army composition rules remain undecided.
 
@@ -41,6 +57,11 @@ and connects search `text_changed` to `_filter_units`. `_ready` creates the shar
 inspector through `_build_info_panel`; root `resized` calls `_layout_info_panel`.
 Row `mouse_entered` and `focus_entered` call `_inspect_unit`, which installs
 `army_unit_choice.gd::make_info_card` content and resets scrolling immediately.
+The card decorates rules with `RuleGuide.decorate`; metadata hover signals call
+`_show_rule_guide` / `_hide_rule_guide`, using shared `RuleGuide.description`
+entries. `_fade_rule_guide` blends an explanation below the rules on ordinary
+hover, without Ctrl. Hover Disable or Ember to read its meaning, or hover the
+Fire icon for its attack explanation.
 `_navigate` and `_filter_units` dismiss the inspector. For example, inspecting
 Dormouse Rogue shows a blue Intermediate stripe and an Enemy side label;
 ordinary Starting units show a red stripe.
@@ -56,3 +77,12 @@ under `assets/ui/*-cursor.svg`, with explicit hotspots in the shared installer.
 For example, hover the army name/search field for the I-beam, or drag selected
 text within a text field for the native drag/drop feedback. Army rows still use
 checkbox selection; cursor styling does not add a new deck drag/drop operation.
+
+Local play: after entering a name, choose **Local game** to play offline with
+both starter armies under your control. A new local match gives each player
+eight deployments. Take each side's actions on its turn;
+trigger acknowledgements use the existing successive local-player prompts.
+No relay connection is required. Leave any occupied online lobby first.
+Caller map: the navigation button calls `_navigate("Local game")`, which calls
+`_start_local_game`; that opens `game.tscn` with NetworkSession.online disabled.
+`local_match_controller.gd::_ready` uses its existing offline starter-army path.
